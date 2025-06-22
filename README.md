@@ -12,6 +12,8 @@ This dashboard provides comprehensive monitoring of Arbitrum Timeboost auctions,
 - **Auction Metrics**: Total rounds, revenue, and average prices
 - **Bidder Statistics**: Top bidders with win counts and spending data
 - **Recent Rounds**: Detailed view of recent auctions with transaction links
+- **Timeboosted Transactions**: View individual timeboosted transactions per round
+- **Indexing Progress**: Real-time progress tracking when scanning for transactions
 - **Automatic Updates**: Data refreshes every minute
 - **Efficient Caching**: Reduces RPC calls with smart caching
 - **Rate Limiting**: Handles API rate limits gracefully
@@ -59,14 +61,21 @@ export PORT=3001
    - Processes raw events into structured data
    - Maintains round and bidder statistics
 
-3. **Server** (`src/timeboost/server.ts`)
+3. **Transaction Indexer** (`src/timeboost/core/TransactionIndexer.ts`)
+   - Scans blocks to find timeboosted transactions
+   - Provides progress tracking during indexing
+   - Uses batch processing for efficiency
+
+4. **Server** (`src/timeboost/server.ts`)
    - Express.js API server
    - Serves both API endpoints and static frontend
    - Implements caching and rate limiting
 
-4. **Frontend** (`src/ui/`)
+5. **Frontend** (`src/ui/`)
    - Vanilla JavaScript dashboard
    - Real-time data display with auto-refresh
+   - Modal views for detailed round information
+   - Progress bars for transaction indexing
    - Links to Arbiscan for transactions and addresses
 
 ### API Endpoints
@@ -74,8 +83,9 @@ export PORT=3001
 - `GET /api/metrics` - Overall statistics and metrics
 - `GET /api/bidders` - Bidder rankings and statistics
 - `GET /api/rounds` - Paginated list of rounds
-- `GET /api/rounds/:round` - Detailed round information
+- `GET /api/rounds/:round` - Detailed round information with timeboosted transactions
 - `GET /api/rounds/recent` - Recent auction rounds
+- `GET /api/indexer/progress` - Current transaction indexing progress
 - `GET /health` - Server health check
 
 ## Data Displayed
@@ -99,6 +109,8 @@ export PORT=3001
 - Winner information
 - Price paid (in ETH and USD)
 - Auction transaction hash with Arbiscan link
+- List of timeboosted transactions in the round
+- Transaction details (hash, block, from/to, value, gas)
 
 ## Contract Details
 
@@ -121,6 +133,9 @@ yarn timeboost:dev
 # Run tests
 yarn timeboost:test
 
+# Run dashboard integration tests
+npx mocha -r ts-node/register test/timeboost/dashboard.test.ts --timeout 60000
+
 # Format code
 yarn format
 
@@ -135,6 +150,12 @@ yarn lint
 - Processes events in batches of 1,000 blocks
 - Updates cache every 60 seconds
 - Serves cached data with 30-second freshness
+
+### Transaction Indexing
+- Identifies timeboosted transactions by checking receipt fields
+- Scans blocks within round time boundaries
+- Provides real-time progress updates during indexing
+- Uses batch RPC calls for efficient data fetching
 
 ### Known Bidders
 The dashboard recognizes certain bidder addresses:
@@ -158,6 +179,11 @@ Additional bidders can be added in `src/timeboost/core/EventParser.ts`.
 3. **Missing Data**
    - Data updates every minute
    - Historical data loads on startup (last ~10k blocks)
+
+4. **No Timeboosted Transactions**
+   - Transactions are indexed on-demand when viewing round details
+   - Progress bar shows indexing status
+   - Some rounds may have no timeboosted transactions
 
 ## License
 
