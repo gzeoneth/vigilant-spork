@@ -51,7 +51,17 @@ export class RoundIndexer {
     try {
       const filePath = this.getCacheFilePath(round)
       const data = await fs.readFile(filePath, 'utf-8')
-      return JSON.parse(data)
+      const parsed = JSON.parse(data)
+      // Convert string values back to BigInt
+      return {
+        ...parsed,
+        transactions: parsed.transactions.map((tx: any) => ({
+          ...tx,
+          value: BigInt(tx.value),
+          gasUsed: BigInt(tx.gasUsed),
+          effectiveGasPrice: BigInt(tx.effectiveGasPrice),
+        })),
+      }
     } catch (error) {
       return null
     }
@@ -60,7 +70,17 @@ export class RoundIndexer {
   private async cacheRound(round: string, data: IndexedRound) {
     try {
       const filePath = this.getCacheFilePath(round)
-      await fs.writeFile(filePath, JSON.stringify(data, null, 2))
+      // Convert BigInt values to strings for JSON serialization
+      const serializable = {
+        ...data,
+        transactions: data.transactions.map(tx => ({
+          ...tx,
+          value: tx.value.toString(),
+          gasUsed: tx.gasUsed.toString(),
+          effectiveGasPrice: tx.effectiveGasPrice.toString(),
+        })),
+      }
+      await fs.writeFile(filePath, JSON.stringify(serializable, null, 2))
     } catch (error) {
       logger.error('RoundIndexer', `Error caching round ${round}`, error)
     }

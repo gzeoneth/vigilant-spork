@@ -314,18 +314,25 @@ async function refreshData() {
   }
 }
 
+// Keep track of active intervals to clean them up
+let activeProgressInterval = null
+
 // Modal functions
 function showRoundDetails(roundNumber) {
   const modal = document.getElementById('roundModal')
   const modalTitle = document.getElementById('modalTitle')
   const modalContent = document.getElementById('modalContent')
 
+  // Clear any existing interval
+  if (activeProgressInterval) {
+    clearInterval(activeProgressInterval)
+    activeProgressInterval = null
+  }
+
   modal.style.display = 'block'
   modalTitle.textContent = `Round ${roundNumber} Details`
   modalContent.innerHTML =
     '<div class="loading"><span class="spinner"></span>Loading round details...</div>'
-
-  let progressInterval = null
 
   // Fetch round details
   fetchData(`/rounds/${roundNumber}`).then(async round => {
@@ -335,38 +342,88 @@ function showRoundDetails(roundNumber) {
       return
     }
 
-    // If round is not indexed, start indexing
-    if (round.indexStatus === 'not_started') {
-      // Trigger indexing
-      await fetch(`${API_URL}/rounds/${roundNumber}/index`, { method: 'POST' })
+    // If round is being indexed or needs indexing, show progress
+    if (round.indexStatus === 'not_started' || round.indexStatus === 'pending' || round.indexStatus === 'indexing') {
+      // If not started, trigger indexing
+      if (round.indexStatus === 'not_started') {
+        await fetch(`${API_URL}/rounds/${roundNumber}/index`, { method: 'POST' })
+      }
+
+      // Show initial indexing status
+      modalContent.innerHTML = getIndexingStatusHtml(round)
 
       // Start monitoring progress
-      progressInterval = setInterval(async () => {
-        const progress = await fetchData(
-          `/indexer/progress?round=${roundNumber}`
-        )
-        if (progress) {
-          updateIndexingStatus(round, progress)
-
-          if (progress.status === 'completed') {
-            clearInterval(progressInterval)
-            // Reload round details
-            showRoundDetails(roundNumber)
-          } else if (progress.status === 'error') {
-            clearInterval(progressInterval)
+      activeProgressInterval = setInterval(async () => {
+        const updatedRound = await fetchData(`/rounds/${roundNumber}`)
+        if (updatedRound) {
+          if (updatedRound.indexStatus === 'completed' && updatedRound.transactions) {
+            clearInterval(activeProgressInterval)
+            activeProgressInterval = null
+            // Show the complete round details
+            displayRoundDetails(updatedRound)
+          } else if (updatedRound.indexStatus === 'error') {
+            clearInterval(activeProgressInterval)
+            activeProgressInterval = null
+            modalContent.innerHTML = '<div class="error">Error indexing round</div>'
+          } else {
+            // Update progress display without blinking
+            const progressElement = document.getElementById('indexingProgress')
+            if (progressElement) {
+              progressElement.innerHTML = getProgressText(updatedRound)
+            }
           }
         }
-      }, 500)
+      }, 1000)
+    } else {
+      // Round is already indexed, display it
+      displayRoundDetails(round)
     }
+  })
+}
 
-    if (
-      progressInterval &&
-      round.indexStatus !== 'not_started' &&
-      round.indexStatus !== 'pending' &&
-      round.indexStatus !== 'indexing'
-    ) {
-      clearInterval(progressInterval)
-    }
+function getIndexingStatusHtml(round) {
+  return `
+    <div class="round-details">
+      <div class="detail-row">
+        <span class="detail-label">Round Number</span>
+        <span class="detail-value">${round.round}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Status</span>
+        <span class="detail-value" id="indexingProgress">${getProgressText(round)}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Start Time</span>
+        <span class="detail-value">${formatTimestamp(round.startTimestamp)}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">End Time</span>
+        <span class="detail-value">${formatTimestamp(round.endTimestamp)}</span>
+      </div>
+    </div>
+    <div style="margin-top: 30px; padding: 20px; background: #27272a; border-radius: 8px; text-align: center;">
+      <span class="spinner"></span>
+      <p style="color: #71717a; margin-top: 10px;">Indexing timeboosted transactions...</p>
+    </div>
+  `
+}
+
+function getProgressText(round) {
+  if (round.indexStatus === 'pending') {
+    return '<span style="color: #f59e0b;">Waiting in queue...</span>'
+  } else if (round.indexStatus === 'indexing') {
+    return `<span style="color: #f59e0b;">Indexing... Found ${round.transactionCount || 0} transactions</span>`
+  } else if (round.indexStatus === 'completed') {
+    return `<span style="color: #10b981;">Completed - ${round.transactionCount || 0} transactions</span>`
+  } else if (round.indexStatus === 'error') {
+    return '<span style="color: #ef4444;">Error during indexing</span>'
+  }
+  return '<span style="color: #6b7280;">Not indexed</span>'
+}
+
+function displayRoundDetails(round) {
+  const modalContent = document.getElementById('modalContent')
+  if (!modalContent) return
 
     let transactionsHtml = ''
     if (round.transactions && round.transactions.length > 0) {
