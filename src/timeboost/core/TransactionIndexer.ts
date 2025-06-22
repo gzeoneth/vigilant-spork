@@ -43,7 +43,7 @@ export class TransactionIndexer {
       if (!block || !block.transactions) return
 
       // Get all transaction hashes
-      const txHashes = block.transactions.map(tx =>
+      const txHashes = block.transactions.map((tx): string =>
         typeof tx === 'string' ? tx : tx.hash
       )
 
@@ -66,7 +66,7 @@ export class TransactionIndexer {
             ? await this.provider.getTransaction(block.transactions[i])
             : block.transactions[i]
 
-        if (tx) {
+        if (tx && typeof tx !== 'string') {
           timeboostedTxs.push({
             hash: receipt.hash,
             blockNumber: receipt.blockNumber,

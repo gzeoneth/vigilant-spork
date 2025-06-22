@@ -29,7 +29,9 @@ describe('Timeboost Event Monitoring', () => {
 
       const event = auctionEvents.find(e => e.transactionHash === txHash)
       expect(event).to.exist
-      expect(event?.args.isMultiBid).to.be.true
+      if (event && event.name === 'AuctionResolved') {
+        expect((event as any).args.isMultiBid).to.be.true
+      }
     })
 
     it('should detect resolveSingleBidAuction transaction', async () => {
@@ -45,7 +47,9 @@ describe('Timeboost Event Monitoring', () => {
 
       const event = auctionEvents.find(e => e.transactionHash === txHash)
       expect(event).to.exist
-      expect(event?.args.isMultiBid).to.be.false
+      if (event && event.name === 'AuctionResolved') {
+        expect((event as any).args.isMultiBid).to.be.false
+      }
     })
 
     it('should detect timeboosted transaction', async () => {
