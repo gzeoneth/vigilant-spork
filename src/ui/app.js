@@ -57,16 +57,18 @@ function formatTimestamp(timestamp) {
 
 async function loadMetrics() {
   const metricsContainer = document.getElementById('metrics')
-  
+
   // Show loading state if it's the initial load
   if (isInitialLoad) {
-    metricsContainer.innerHTML = '<div class="loading"><span class="spinner"></span>Loading metrics...</div>'
+    metricsContainer.innerHTML =
+      '<div class="loading"><span class="spinner"></span>Loading metrics...</div>'
   }
-  
+
   const metrics = await fetchData('/metrics')
   if (!metrics) {
     if (isInitialLoad) {
-      metricsContainer.innerHTML = '<div class="error">Failed to load metrics</div>'
+      metricsContainer.innerHTML =
+        '<div class="error">Failed to load metrics</div>'
     }
     return
   }
@@ -99,20 +101,22 @@ async function loadMetrics() {
 
 async function loadBidders() {
   const biddersContainer = document.getElementById('bidders')
-  
+
   // Show loading state if it's the initial load
   if (isInitialLoad) {
-    biddersContainer.innerHTML = '<div class="loading"><span class="spinner"></span>Loading bidders...</div>'
+    biddersContainer.innerHTML =
+      '<div class="loading"><span class="spinner"></span>Loading bidders...</div>'
   }
-  
+
   const bidders = await fetchData('/bidders')
   if (!bidders) {
     if (isInitialLoad) {
-      biddersContainer.innerHTML = '<div class="error">Failed to load bidders</div>'
+      biddersContainer.innerHTML =
+        '<div class="error">Failed to load bidders</div>'
     }
     return
   }
-  
+
   if (bidders.length === 0) {
     if (isInitialLoad) {
       // Keep loading state until we get real data
@@ -168,20 +172,22 @@ async function loadBidders() {
 async function loadRounds(page = 1) {
   currentPage = page
   const roundsContainer = document.getElementById('rounds')
-  
+
   // Show loading state if it's the initial load
   if (isInitialLoad) {
-    roundsContainer.innerHTML = '<div class="loading"><span class="spinner"></span>Loading rounds...</div>'
+    roundsContainer.innerHTML =
+      '<div class="loading"><span class="spinner"></span>Loading rounds...</div>'
   }
-  
+
   const data = await fetchData(`/rounds?page=${page}&limit=${roundsPerPage}`)
   if (!data || !data.rounds) {
     if (isInitialLoad) {
-      roundsContainer.innerHTML = '<div class="error">Failed to load rounds</div>'
+      roundsContainer.innerHTML =
+        '<div class="error">Failed to load rounds</div>'
     }
     return
   }
-  
+
   if (data.rounds.length === 0) {
     if (isInitialLoad) {
       // Keep loading state until we get real data
@@ -547,6 +553,11 @@ function updateIndexingStatus(round, progress) {
 }
 
 function closeModal() {
+  // Clear any active progress interval
+  if (activeProgressInterval) {
+    clearInterval(activeProgressInterval)
+    activeProgressInterval = null
+  }
   document.getElementById('roundModal').style.display = 'none'
 }
 
@@ -554,7 +565,7 @@ function closeModal() {
 window.onclick = function (event) {
   const modal = document.getElementById('roundModal')
   if (event.target === modal) {
-    modal.style.display = 'none'
+    closeModal()
   }
 }
 

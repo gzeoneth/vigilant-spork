@@ -1,6 +1,7 @@
 import { ethers } from 'ethers'
 import { TimeboostedTransaction } from './types'
 import { BatchProvider } from './BatchProvider'
+import { logger } from './Logger'
 
 export interface IndexerProgress {
   currentBlock: number
@@ -31,6 +32,11 @@ export class TransactionIndexer {
     fromBlock: number,
     toBlock: number
   ): Promise<TimeboostedTransaction[]> {
+    logger.info(
+      'TransactionIndexer',
+      `Starting to index blocks ${fromBlock} to ${toBlock} (${toBlock - fromBlock + 1} blocks)`
+    )
+
     const timeboostedTxs: TimeboostedTransaction[] = []
     const batchSize = 10 // Process blocks in batches
     const totalBlocks = toBlock - fromBlock + 1
@@ -47,6 +53,11 @@ export class TransactionIndexer {
 
       await Promise.all(promises)
       processedBlocks = endBlock - fromBlock + 1
+
+      logger.debug(
+        'TransactionIndexer',
+        `Processed blocks ${blockNum}-${endBlock}, found ${timeboostedTxs.length} timeboosted transactions so far`
+      )
 
       // Report progress
       if (this.progressCallback) {
@@ -65,6 +76,11 @@ export class TransactionIndexer {
         })
       }
     }
+
+    logger.info(
+      'TransactionIndexer',
+      `Completed indexing blocks ${fromBlock}-${toBlock}. Found ${timeboostedTxs.length} timeboosted transactions`
+    )
 
     return timeboostedTxs.sort((a, b) => a.blockNumber - b.blockNumber)
   }
@@ -103,6 +119,11 @@ export class TransactionIndexer {
             : block.transactions[i]
 
         if (tx && typeof tx !== 'string') {
+          logger.debug(
+            'TransactionIndexer',
+            `Found timeboosted transaction: ${receipt.hash} in block ${blockNumber}`
+          )
+
           timeboostedTxs.push({
             hash: receipt.hash,
             blockNumber: receipt.blockNumber,
@@ -118,7 +139,11 @@ export class TransactionIndexer {
         }
       }
     } catch (error) {
-      console.error(`Error processing block ${blockNumber}:`, error)
+      logger.error(
+        'TransactionIndexer',
+        `Error processing block ${blockNumber}`,
+        error
+      )
     }
   }
 
@@ -132,7 +157,11 @@ export class TransactionIndexer {
       ])
       return rawReceipt.timeboosted === true || rawReceipt.timeBoosted === true
     } catch (error) {
-      console.error('Error checking timeboosted status:', error)
+      logger.error(
+        'TransactionIndexer',
+        'Error checking timeboosted status',
+        error
+      )
       return false
     }
   }
@@ -141,6 +170,11 @@ export class TransactionIndexer {
     roundStart: number,
     roundEnd: number
   ): Promise<TimeboostedTransaction[]> {
+    logger.info(
+      'TransactionIndexer',
+      `Finding blocks for round timestamps: ${new Date(roundStart * 1000).toISOString()} to ${new Date(roundEnd * 1000).toISOString()}`
+    )
+
     // Find block numbers for the round time range
     const startBlock = await this.findBlockByTimestamp(roundStart, 'after')
     const endBlock = await this.findBlockByTimestamp(roundEnd, 'before')
@@ -148,6 +182,11 @@ export class TransactionIndexer {
     if (!startBlock || !endBlock) {
       throw new Error('Could not determine block range for round')
     }
+
+    logger.info(
+      'TransactionIndexer',
+      `Round maps to blocks ${startBlock} to ${endBlock}`
+    )
 
     return this.getTimeboostedTransactions(startBlock, endBlock)
   }
@@ -186,7 +225,11 @@ export class TransactionIndexer {
         return low
       }
     } catch (error) {
-      console.error('Error finding block by timestamp:', error)
+      logger.error(
+        'TransactionIndexer',
+        'Error finding block by timestamp',
+        error
+      )
       return null
     }
   }

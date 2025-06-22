@@ -64,15 +64,17 @@ async function updateCache() {
       try {
         const events = await eventMonitor.getEvents(start, end)
         allEvents = allEvents.concat(events)
-        console.log(
+        logger.debug(
+          'Server',
           `Fetched ${events.length} events from blocks ${start}-${end}`
         )
 
         // Add delay between batches to avoid rate limiting
         await new Promise(resolve => setTimeout(resolve, 200))
       } catch (error) {
-        console.error(
-          `Error fetching events for blocks ${start}-${end}:`,
+        logger.error(
+          'Server',
+          `Error fetching events for blocks ${start}-${end}`,
           error
         )
         // Add longer delay on error (might be rate limited)
@@ -134,9 +136,9 @@ async function updateCache() {
       startBlock: fromBlock,
     }
 
-    console.log('Cache updated successfully')
+    logger.info('Server', 'Cache updated successfully')
   } catch (error) {
-    console.error('Error updating cache:', error)
+    logger.error('Server', 'Error updating cache', error)
   }
 }
 
@@ -148,7 +150,7 @@ let isFetching = false
 
 async function backgroundFetcher() {
   if (isFetching) {
-    console.log('Fetcher already running, skipping...')
+    logger.debug('Server', 'Fetcher already running, skipping...')
     return
   }
 
@@ -157,7 +159,7 @@ async function backgroundFetcher() {
   try {
     await updateCache()
   } catch (error) {
-    console.error('Error in background fetcher:', error)
+    logger.error('Server', 'Error in background fetcher', error)
   } finally {
     isFetching = false
   }
@@ -201,7 +203,7 @@ app.get('/api/metrics', async (req, res) => {
       lastProcessedBlock: 0,
     })
   } catch (error) {
-    console.error('Error in /api/metrics:', error)
+    logger.error('Server', 'Error in /api/metrics', error)
     return res.status(500).json({ error: 'Internal server error' })
   }
 })
@@ -217,7 +219,7 @@ app.get('/api/bidders', async (req, res) => {
 
     return res.json([])
   } catch (error) {
-    console.error('Error in /api/bidders:', error)
+    logger.error('Server', 'Error in /api/bidders', error)
     return res.status(500).json({ error: 'Internal server error' })
   }
 })
@@ -233,7 +235,7 @@ app.get('/api/rounds/recent', async (req, res) => {
 
     return res.json([])
   } catch (error) {
-    console.error('Error in /api/rounds/recent:', error)
+    logger.error('Server', 'Error in /api/rounds/recent', error)
     return res.status(500).json({ error: 'Internal server error' })
   }
 })
@@ -312,7 +314,7 @@ app.get('/api/rounds/:round', async (req, res) => {
       indexStatus: status?.status || 'not_started',
     })
   } catch (error) {
-    console.error('Error in /api/rounds/:round:', error)
+    logger.error('Server', 'Error in /api/rounds/:round', error)
     return res.status(500).json({ error: 'Internal server error' })
   }
 })
@@ -373,7 +375,7 @@ app.get('/api/rounds', async (req, res) => {
       },
     })
   } catch (error) {
-    console.error('Error in /api/rounds:', error)
+    logger.error('Server', 'Error in /api/rounds', error)
     return res.status(500).json({ error: 'Internal server error' })
   }
 })
@@ -394,15 +396,15 @@ app.get('/api/indexer/progress', (req, res) => {
     // Round not found
     return res.json({
       status: 'idle',
-      round: roundId
+      round: roundId,
     })
   }
-  
+
   // Return overall indexer status when no specific round is requested
   const allStatuses = roundIndexer.getAllRoundStatuses()
   const indexingCount = allStatuses.filter(s => s.status === 'indexing').length
   const pendingCount = allStatuses.filter(s => s.status === 'pending').length
-  
+
   if (indexingCount > 0) {
     return res.json({
       status: 'indexing',
@@ -411,13 +413,13 @@ app.get('/api/indexer/progress', (req, res) => {
         totalBlocks: indexingCount + pendingCount,
         processedBlocks: 0,
         roundsIndexing: indexingCount,
-        roundsPending: pendingCount
-      }
+        roundsPending: pendingCount,
+      },
     })
   }
-  
+
   return res.json({
-    status: 'idle'
+    status: 'idle',
   })
 })
 
@@ -436,7 +438,7 @@ app.post('/api/rounds/:round/index', async (req, res) => {
         currentRoundIndexStatus = status
       })
       .catch(error => {
-        console.error(`Error indexing round ${round.round}:`, error)
+        logger.error('Server', `Error indexing round ${round.round}`, error)
       })
 
     return res.json({
@@ -444,7 +446,7 @@ app.post('/api/rounds/:round/index', async (req, res) => {
       round: round.round.toString(),
     })
   } catch (error) {
-    console.error('Error in /api/rounds/:round/index:', error)
+    logger.error('Server', 'Error in /api/rounds/:round/index', error)
     return res.status(500).json({ error: 'Internal server error' })
   }
 })
@@ -460,8 +462,9 @@ app.get('/health', (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Timeboost server running on port ${PORT}`)
-  console.log(`Dashboard available at: http://localhost:${PORT}`)
-  console.log(`RPC URL: ${RPC_URL}`)
-  console.log(`ETH Price: $${ETH_PRICE}`)
+  logger.info('Server', `Timeboost server running on port ${PORT}`)
+  logger.info('Server', `Dashboard available at: http://localhost:${PORT}`)
+  logger.info('Server', `RPC URL: ${RPC_URL}`)
+  logger.info('Server', `ETH Price: $${ETH_PRICE}`)
+  logger.info('Server', `Log level: ${LOG_LEVEL}`)
 })

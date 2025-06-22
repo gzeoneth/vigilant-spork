@@ -3,6 +3,7 @@ import { TransactionIndexer } from './TransactionIndexer'
 import { RoundInfo, TimeboostedTransaction } from './types'
 import fs from 'fs/promises'
 import path from 'path'
+import { logger } from './Logger'
 
 export interface RoundIndexStatus {
   round: string
@@ -38,7 +39,7 @@ export class RoundIndexer {
     try {
       await fs.mkdir(this.cacheDir, { recursive: true })
     } catch (error) {
-      console.error('Error creating cache directory:', error)
+      logger.error('RoundIndexer', 'Error creating cache directory', error)
     }
   }
 
@@ -61,7 +62,7 @@ export class RoundIndexer {
       const filePath = this.getCacheFilePath(round)
       await fs.writeFile(filePath, JSON.stringify(data, null, 2))
     } catch (error) {
-      console.error(`Error caching round ${round}:`, error)
+      logger.error('RoundIndexer', `Error caching round ${round}`, error)
     }
   }
 
@@ -71,9 +72,15 @@ export class RoundIndexer {
   ): Promise<IndexedRound> {
     const roundKey = roundInfo.round.toString()
 
+    logger.info('RoundIndexer', `Indexing requested for round ${roundKey}`)
+
     // Check cache first
     const cached = await this.getCachedRound(roundKey)
     if (cached) {
+      logger.info(
+        'RoundIndexer',
+        `Round ${roundKey} found in cache with ${cached.transactions.length} transactions`
+      )
       this.roundStatus.set(roundKey, {
         round: roundKey,
         status: 'completed',
@@ -150,6 +157,11 @@ export class RoundIndexer {
         const startTimestamp = Number(roundInfo.startTimestamp)
         const endTimestamp = Number(roundInfo.endTimestamp)
 
+        logger.info(
+          'RoundIndexer',
+          `Starting to index round ${roundKey} (${new Date(startTimestamp * 1000).toISOString()} to ${new Date(endTimestamp * 1000).toISOString()})`
+        )
+
         // Set progress callback
         this.indexer.setProgressCallback(progress => {
           this.roundStatus.set(roundKey, {
@@ -184,8 +196,13 @@ export class RoundIndexer {
           transactionCount: transactions.length,
           lastIndexed: Date.now(),
         })
+
+        logger.info(
+          'RoundIndexer',
+          `Successfully indexed round ${roundKey} with ${transactions.length} transactions`
+        )
       } catch (error) {
-        console.error(`Error indexing round ${roundKey}:`, error)
+        logger.error('RoundIndexer', `Error indexing round ${roundKey}`, error)
         this.roundStatus.set(roundKey, {
           round: roundKey,
           status: 'error',
@@ -220,7 +237,7 @@ export class RoundIndexer {
         }
       }
     } catch (error) {
-      console.error('Error clearing cache:', error)
+      logger.error('RoundIndexer', 'Error clearing cache', error)
     }
   }
 }
