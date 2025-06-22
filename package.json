@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "repository": "https://github.com/OffchainLabs/blockchain-eng-template.git",
   "scripts": {
-    "prepare": "forge install && cd lib/arbitrum-sdk && yarn",
+    "prepare": "forge install",
     "minimal-install": "yarn --ignore-scripts && forge install",
     "minimal-publish": "./scripts/template/publish.bash",
     "audit:ci": "audit-ci --config ./audit-ci.jsonc",
