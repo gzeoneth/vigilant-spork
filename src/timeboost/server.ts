@@ -26,7 +26,8 @@ let cachedData = {
   metrics: null as any,
   bidders: null as any,
   recentRounds: null as any,
-  lastUpdate: 0
+  lastUpdate: 0,
+  startBlock: 0
 }
 
 const CACHE_DURATION = 30000 // 30 seconds
@@ -42,6 +43,9 @@ async function updateCache() {
     const fromBlock = Math.max(1, latestBlock - 10000) // Last ~10k blocks
     
     console.log(`Scanning blocks ${fromBlock} to ${latestBlock}...`)
+    
+    // Store the starting block
+    cachedData.startBlock = fromBlock
     
     // Get events in batches
     const batchSize = 1000
@@ -72,7 +76,8 @@ async function updateCache() {
         totalRevenueUSD: eventParser.formatUSD(metrics.totalRevenue, ETH_PRICE),
         averagePricePerRound: eventParser.formatEther(metrics.averagePricePerRound),
         averagePricePerRoundUSD: eventParser.formatUSD(metrics.averagePricePerRound, ETH_PRICE),
-        lastProcessedBlock: latestBlock
+        lastProcessedBlock: latestBlock,
+        startBlock: fromBlock
       },
       bidders: bidders.map(bidder => ({
         address: bidder.address,
@@ -92,9 +97,11 @@ async function updateCache() {
         winnerBidder: round.winnerBidder,
         pricePaid: round.pricePaid ? eventParser.formatEther(round.pricePaid) : null,
         pricePaidUSD: round.pricePaid ? eventParser.formatUSD(round.pricePaid, ETH_PRICE) : null,
+        auctionTransactionHash: round.auctionTransactionHash,
         transactionCount: round.transactions.length
       })),
-      lastUpdate: Date.now()
+      lastUpdate: Date.now(),
+      startBlock: fromBlock
     }
     
     console.log('Cache updated successfully')
@@ -178,6 +185,7 @@ app.get('/api/rounds/:round', async (req, res) => {
       winnerBidAmount: round.winnerBidAmount ? eventParser.formatEther(round.winnerBidAmount) : null,
       pricePaid: round.pricePaid ? eventParser.formatEther(round.pricePaid) : null,
       pricePaidUSD: round.pricePaid ? eventParser.formatUSD(round.pricePaid, ETH_PRICE) : null,
+      auctionTransactionHash: round.auctionTransactionHash,
       transactions: []
     })
   } catch (error) {
@@ -204,6 +212,7 @@ app.get('/api/rounds', async (req, res) => {
       winnerBidAmount: round.winnerBidAmount ? eventParser.formatEther(round.winnerBidAmount) : null,
       pricePaid: round.pricePaid ? eventParser.formatEther(round.pricePaid) : null,
       pricePaidUSD: round.pricePaid ? eventParser.formatUSD(round.pricePaid, ETH_PRICE) : null,
+      auctionTransactionHash: round.auctionTransactionHash,
       transactionCount: round.transactions.length
     }))
     

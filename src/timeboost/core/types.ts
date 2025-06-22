@@ -134,6 +134,7 @@ export interface RoundInfo {
   winnerBidder: string | null
   winnerBidAmount: bigint | null
   pricePaid: bigint | null
+  auctionTransactionHash: string | null
   transactions: TimeboostedTransaction[]
 }
 

@@ -21,10 +21,9 @@
     "test:storage": "./test/storage/test-storage.bash",
     "gas-snapshot": "forge snapshot --match-path \"test/unit/**/*.t.sol\"",
     "fix": "yarn format; yarn test:sigs; yarn test:storage; yarn gas-snapshot",
-    "timeboost": "ts-node src/timeboost/index.ts",
-    "timeboost:dev": "nodemon --watch src/timeboost --ext ts --exec ts-node src/timeboost/index.ts",
-    "timeboost:test": "mocha -r ts-node/register test/timeboost/**/*.test.ts --timeout 30000",
-    "timeboost:minimal": "ts-node src/timeboost/server-minimal.ts"
+    "timeboost": "ts-node src/timeboost/server.ts",
+    "timeboost:dev": "nodemon --watch src/timeboost --ext ts --exec ts-node src/timeboost/server.ts",
+    "timeboost:test": "mocha -r ts-node/register test/timeboost/**/*.test.ts --timeout 30000"
   },
   "devDependencies": {
     "@arbitrum/nitro-contracts": "^3.1.1",

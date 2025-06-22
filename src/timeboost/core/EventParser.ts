@@ -59,6 +59,7 @@ export class EventParser {
     round.startTimestamp = event.args.roundStart
     round.endTimestamp = event.args.roundEnd
     round.expressLaneController = event.args.winnerExpressLaneController
+    round.auctionTransactionHash = event.transactionHash
 
     this.rounds.set(roundKey, round)
 
@@ -109,6 +110,7 @@ export class EventParser {
       winnerBidder: null,
       winnerBidAmount: null,
       pricePaid: null,
+      auctionTransactionHash: null,
       transactions: [],
     }
   }
