@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:3001/api'
+const API_URL = window.location.origin + '/api'
 
 let isLoading = false
 let isConnected = false
