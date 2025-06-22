@@ -6,11 +6,13 @@ import { EventMonitor } from './core/EventMonitor'
 import { EventParser } from './core/EventParser'
 import { TransactionIndexer, IndexerProgress } from './core/TransactionIndexer'
 import { RoundIndexer, RoundIndexStatus } from './core/RoundIndexer'
+import { logger } from './core/Logger'
 
 const app = express()
 const PORT = process.env.PORT || 3001
 const RPC_URL = process.env.RPC_URL || 'https://arb1.arbitrum.io/rpc'
 const ETH_PRICE = parseFloat(process.env.ETH_USD_PRICE || '2600')
+const LOG_LEVEL = process.env.LOG_LEVEL || 'INFO'
 
 // Middleware
 app.use(cors())
@@ -50,7 +52,7 @@ async function updateCache() {
     const latestBlock = await provider.getBlockNumber()
     const fromBlock = Math.max(1, latestBlock - 10000) // Last ~10k blocks
 
-    console.log(`Scanning blocks ${fromBlock} to ${latestBlock}...`)
+    logger.info('Server', `Scanning blocks ${fromBlock} to ${latestBlock}...`)
 
     // Store the starting block
     cachedData.startBlock = fromBlock
@@ -462,8 +464,8 @@ app.get('/health', (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-  logger.info('Server', `Timeboost server running on port ${PORT}`)
-  logger.info('Server', `Dashboard available at: http://localhost:${PORT}`)
+  console.log(`Timeboost server running on port ${PORT}`)
+  console.log(`Dashboard available at: http://localhost:${PORT}`)
   logger.info('Server', `RPC URL: ${RPC_URL}`)
   logger.info('Server', `ETH Price: $${ETH_PRICE}`)
   logger.info('Server', `Log level: ${LOG_LEVEL}`)
