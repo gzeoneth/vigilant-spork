@@ -135,7 +135,7 @@ app.get('/api/rounds/:round', (req, res) => {
     })),
   }
 
-  res.json(formattedRound)
+  return res.json(formattedRound)
 })
 
 // Get recent rounds

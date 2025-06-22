@@ -128,7 +128,8 @@ export class BatchProvider extends ethers.JsonRpcProvider {
   }
 
   private async sendBatchRequest(requests: any[]): Promise<any[]> {
-    const response = await fetch(this.connection.url, {
+    const url = (this as any)._getConnection().url
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -158,10 +159,11 @@ export class BatchProvider extends ethers.JsonRpcProvider {
 
     const transactions = await Promise.all(txPromises)
 
-    return {
-      ...block,
-      transactions: transactions.filter(tx => tx !== null),
-    } as ethers.Block
+    // Create a new block object with transactions
+    const blockWithTxs = Object.create(Object.getPrototypeOf(block))
+    Object.assign(blockWithTxs, block)
+    blockWithTxs.transactions = transactions.filter(tx => tx !== null)
+    return blockWithTxs
   }
 
   async getTransactionReceipts(

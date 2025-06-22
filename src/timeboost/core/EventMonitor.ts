@@ -1,7 +1,7 @@
 import { ethers } from 'ethers'
 import { AllTimeboostEvents } from './types'
 import { BatchProvider } from './BatchProvider'
-import expressLaneAuctionABI from '../../../node_modules/@arbitrum/nitro-contracts/out/ExpressLaneAuction.sol/ExpressLaneAuction.json'
+import expressLaneAuctionABI from '../../../node_modules/@arbitrum/nitro-contracts/build/contracts/src/express-lane-auction/ExpressLaneAuction.sol/ExpressLaneAuction.json'
 
 export class EventMonitor {
   private provider: BatchProvider
@@ -27,9 +27,9 @@ export class EventMonitor {
     toBlock: number,
     eventName?: string
   ): Promise<AllTimeboostEvents[]> {
-    const filter = eventName ? this.contract.filters[eventName]() : {}
-
-    const logs = await this.contract.queryFilter(filter, fromBlock, toBlock)
+    const logs = eventName
+      ? await this.contract.queryFilter(this.contract.filters[eventName](), fromBlock, toBlock)
+      : await this.contract.queryFilter('*', fromBlock, toBlock)
     const events: AllTimeboostEvents[] = []
 
     // Batch fetch all blocks
@@ -40,12 +40,13 @@ export class EventMonitor {
 
     for (const log of logs) {
       const block = blockMap.get(log.blockNumber)
+      const eventLog = log as ethers.EventLog
       const eventData = {
-        name: log.eventName,
-        transactionHash: log.transactionHash,
-        blockNumber: log.blockNumber,
+        name: eventLog.eventName || '',
+        transactionHash: eventLog.transactionHash,
+        blockNumber: eventLog.blockNumber,
         timestamp: block?.timestamp || 0,
-        args: this.parseEventArgs(log.eventName || '', log.args),
+        args: this.parseEventArgs(eventLog.eventName || '', eventLog.args),
       } as AllTimeboostEvents
 
       events.push(eventData)
