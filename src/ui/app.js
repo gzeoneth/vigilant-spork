@@ -4,6 +4,7 @@ let isLoading = false
 let isConnected = false
 let currentPage = 1
 let roundsPerPage = 20
+let isInitialLoad = true
 
 async function fetchData(endpoint) {
   try {
@@ -55,11 +56,24 @@ function formatTimestamp(timestamp) {
 }
 
 async function loadMetrics() {
-  const metrics = await fetchData('/metrics')
-  if (!metrics) return
-
   const metricsContainer = document.getElementById('metrics')
-  metricsContainer.innerHTML = `
+  
+  // Show loading state if it's the initial load
+  if (isInitialLoad) {
+    metricsContainer.innerHTML = '<div class="loading"><span class="spinner"></span>Loading metrics...</div>'
+  }
+  
+  const metrics = await fetchData('/metrics')
+  if (!metrics) {
+    if (isInitialLoad) {
+      metricsContainer.innerHTML = '<div class="error">Failed to load metrics</div>'
+    }
+    return
+  }
+
+  // Only update if we have actual data (not default zeros)
+  if (metrics.totalRounds > 0 || !isInitialLoad) {
+    metricsContainer.innerHTML = `
         <div class="metric-card">
             <div class="metric-label">Total Rounds</div>
             <div class="metric-value">${metrics.totalRounds.toLocaleString()}</div>
@@ -78,13 +92,33 @@ async function loadMetrics() {
             <div class="metric-label">Last Processed Block</div>
             <div class="metric-value">${metrics.lastProcessedBlock.toLocaleString()}</div>
             ${metrics.startBlock ? `<div class="metric-usd">From block ${metrics.startBlock.toLocaleString()}</div>` : ''}
+        </div>
     `
+  }
 }
 
 async function loadBidders() {
+  const biddersContainer = document.getElementById('bidders')
+  
+  // Show loading state if it's the initial load
+  if (isInitialLoad) {
+    biddersContainer.innerHTML = '<div class="loading"><span class="spinner"></span>Loading bidders...</div>'
+  }
+  
   const bidders = await fetchData('/bidders')
-  if (!bidders || bidders.length === 0) {
-    document.getElementById('bidders').innerHTML = '<p>No bidders found</p>'
+  if (!bidders) {
+    if (isInitialLoad) {
+      biddersContainer.innerHTML = '<div class="error">Failed to load bidders</div>'
+    }
+    return
+  }
+  
+  if (bidders.length === 0) {
+    if (isInitialLoad) {
+      // Keep loading state until we get real data
+      return
+    }
+    biddersContainer.innerHTML = '<p>No bidders found</p>'
     return
   }
 
@@ -133,9 +167,27 @@ async function loadBidders() {
 
 async function loadRounds(page = 1) {
   currentPage = page
+  const roundsContainer = document.getElementById('rounds')
+  
+  // Show loading state if it's the initial load
+  if (isInitialLoad) {
+    roundsContainer.innerHTML = '<div class="loading"><span class="spinner"></span>Loading rounds...</div>'
+  }
+  
   const data = await fetchData(`/rounds?page=${page}&limit=${roundsPerPage}`)
-  if (!data || !data.rounds || data.rounds.length === 0) {
-    document.getElementById('rounds').innerHTML = '<p>No rounds found</p>'
+  if (!data || !data.rounds) {
+    if (isInitialLoad) {
+      roundsContainer.innerHTML = '<div class="error">Failed to load rounds</div>'
+    }
+    return
+  }
+  
+  if (data.rounds.length === 0) {
+    if (isInitialLoad) {
+      // Keep loading state until we get real data
+      return
+    }
+    roundsContainer.innerHTML = '<p>No rounds found</p>'
     return
   }
 
@@ -245,6 +297,10 @@ async function refreshData() {
 
   try {
     await Promise.all([loadMetrics(), loadBidders(), loadRounds()])
+    // Mark initial load as complete after first successful load
+    if (isInitialLoad && isConnected) {
+      isInitialLoad = false
+    }
   } catch (error) {
     console.error('Error refreshing data:', error)
   } finally {

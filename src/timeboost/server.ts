@@ -178,6 +178,19 @@ app.get('/api/metrics', async (req, res) => {
       return res.json(cachedData.metrics)
     }
 
+    // If we're currently fetching, indicate that
+    if (isFetching && cachedData.lastUpdate === 0) {
+      return res.json({
+        totalRounds: 0,
+        totalRevenue: '0',
+        totalRevenueUSD: '0',
+        averagePricePerRound: '0',
+        averagePricePerRoundUSD: '0',
+        lastProcessedBlock: 0,
+        isLoading: true,
+      })
+    }
+
     // Otherwise return default data
     return res.json({
       totalRounds: 0,
@@ -378,12 +391,33 @@ app.get('/api/indexer/progress', (req, res) => {
         error: status.error,
       })
     }
+    // Round not found
+    return res.json({
+      status: 'idle',
+      round: roundId
+    })
   }
-
-  // Return all round statuses
+  
+  // Return overall indexer status when no specific round is requested
   const allStatuses = roundIndexer.getAllRoundStatuses()
+  const indexingCount = allStatuses.filter(s => s.status === 'indexing').length
+  const pendingCount = allStatuses.filter(s => s.status === 'pending').length
+  
+  if (indexingCount > 0) {
+    return res.json({
+      status: 'indexing',
+      progress: {
+        currentBlock: 0,
+        totalBlocks: indexingCount + pendingCount,
+        processedBlocks: 0,
+        roundsIndexing: indexingCount,
+        roundsPending: pendingCount
+      }
+    })
+  }
+  
   return res.json({
-    rounds: allStatuses,
+    status: 'idle'
   })
 })
 
