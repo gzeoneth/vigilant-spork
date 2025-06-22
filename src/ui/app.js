@@ -154,7 +154,7 @@ async function loadRounds() {
                 ${data
                   .map(
                     round => `
-                    <tr>
+                    <tr class="clickable-row" onclick="showRoundDetails('${round.round}')">
                         <td>${round.round}</td>
                         <td>
                             ${
@@ -166,7 +166,7 @@ async function loadRounds() {
                         <td class="address">
                             ${
                               round.expressLaneController
-                                ? `<a href="https://arbiscan.io/address/${round.expressLaneController}" target="_blank" class="transaction-link">
+                                ? `<a href="https://arbiscan.io/address/${round.expressLaneController}" target="_blank" class="transaction-link" onclick="event.stopPropagation()">
                                     ${formatAddress(round.expressLaneController)}
                                     <svg class="external-icon" viewBox="0 0 20 20" fill="currentColor">
                                         <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
@@ -190,7 +190,7 @@ async function loadRounds() {
                         <td>
                             ${
                               round.auctionTransactionHash
-                                ? `<a href="https://arbiscan.io/tx/${round.auctionTransactionHash}" target="_blank" class="transaction-link">
+                                ? `<a href="https://arbiscan.io/tx/${round.auctionTransactionHash}" target="_blank" class="transaction-link" onclick="event.stopPropagation()">
                                     ${formatAddress(round.auctionTransactionHash)}
                                     <svg class="external-icon" viewBox="0 0 20 20" fill="currentColor">
                                         <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
@@ -224,6 +224,179 @@ async function refreshData() {
     console.error('Error refreshing data:', error)
   } finally {
     isLoading = false
+  }
+}
+
+// Modal functions
+function showRoundDetails(roundNumber) {
+  const modal = document.getElementById('roundModal')
+  const modalTitle = document.getElementById('modalTitle')
+  const modalContent = document.getElementById('modalContent')
+  
+  modal.style.display = 'block'
+  modalTitle.textContent = `Round ${roundNumber} Details`
+  modalContent.innerHTML = '<div class="loading"><span class="spinner"></span>Loading round details...</div>'
+  
+  // Start progress monitoring
+  const progressInterval = setInterval(async () => {
+    const progress = await fetchData('/indexer/progress')
+    if (progress && progress.status === 'indexing') {
+      updateProgressDisplay(progress.progress)
+    }
+  }, 500)
+  
+  // Fetch round details
+  fetchData(`/rounds/${roundNumber}`).then(round => {
+    clearInterval(progressInterval)
+    if (!round) {
+      modalContent.innerHTML = '<div class="error">Failed to load round details</div>'
+      return
+    }
+    
+    let transactionsHtml = ''
+    if (round.transactions && round.transactions.length > 0) {
+      transactionsHtml = `
+        <h3 style="margin-top: 30px; margin-bottom: 20px;">Timeboosted Transactions (${round.transactions.length})</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Transaction Hash</th>
+              <th>Block</th>
+              <th>From</th>
+              <th>To</th>
+              <th>Value</th>
+              <th>Gas Used</th>
+              <th>Gas Price</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${round.transactions.map(tx => `
+              <tr>
+                <td>
+                  <a href="${tx.arbiscanUrl}" target="_blank" class="transaction-link">
+                    ${formatAddress(tx.hash)}
+                    <svg class="external-icon" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
+                      <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" />
+                    </svg>
+                  </a>
+                </td>
+                <td>${tx.blockNumber}</td>
+                <td class="address">${formatAddress(tx.from)}</td>
+                <td class="address">${formatAddress(tx.to)}</td>
+                <td>${tx.value} ETH</td>
+                <td>${tx.gasUsed}</td>
+                <td>${tx.effectiveGasPrice} ETH</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `
+    } else {
+      transactionsHtml = `
+        <div style="margin-top: 30px; padding: 20px; background: #27272a; border-radius: 8px; text-align: center;">
+          <p style="color: #71717a;">No timeboosted transactions found for this round</p>
+        </div>
+      `
+    }
+    
+    modalContent.innerHTML = `
+      <div class="round-details">
+        <div class="detail-row">
+          <span class="detail-label">Round Number</span>
+          <span class="detail-value">${round.round}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Start Time</span>
+          <span class="detail-value">${formatTimestamp(round.startTimestamp)}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">End Time</span>
+          <span class="detail-value">${formatTimestamp(round.endTimestamp)}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Express Lane Controller</span>
+          <span class="detail-value">
+            ${round.expressLaneController ? `
+              <a href="https://arbiscan.io/address/${round.expressLaneController}" target="_blank" class="transaction-link">
+                ${round.expressLaneController}
+                <svg class="external-icon" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
+                  <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" />
+                </svg>
+              </a>
+            ` : 'None'}
+          </span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Auction Type</span>
+          <span class="detail-value">
+            ${round.auctionType ? `<span class="auction-type ${round.auctionType}">${round.auctionType === 'multi' ? 'Multi-bid' : 'Single-bid'}</span>` : '-'}
+          </span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Winner Bidder</span>
+          <span class="detail-value">${round.winnerBidder || '-'}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Price Paid</span>
+          <span class="detail-value">
+            ${round.pricePaid ? `${round.pricePaid} ETH ($${round.pricePaidUSD})` : '-'}
+          </span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Auction Transaction</span>
+          <span class="detail-value">
+            ${round.auctionTransactionHash ? `
+              <a href="https://arbiscan.io/tx/${round.auctionTransactionHash}" target="_blank" class="transaction-link">
+                ${formatAddress(round.auctionTransactionHash)}
+                <svg class="external-icon" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
+                  <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" />
+                </svg>
+              </a>
+            ` : '-'}
+          </span>
+        </div>
+      </div>
+      <div id="progressContainer"></div>
+      ${transactionsHtml}
+    `
+  })
+}
+
+function updateProgressDisplay(progress) {
+  const progressContainer = document.getElementById('progressContainer')
+  if (!progressContainer) return
+  
+  const percentage = Math.round((progress.processedBlocks / progress.totalBlocks) * 100)
+  
+  progressContainer.innerHTML = `
+    <div style="margin: 20px 0; padding: 20px; background: #27272a; border-radius: 8px;">
+      <h3 style="margin-bottom: 10px;">Indexing Progress</h3>
+      <div class="progress-bar">
+        <div class="progress-fill" style="width: ${percentage}%"></div>
+      </div>
+      <div class="progress-text">
+        ${progress.processedBlocks} / ${progress.totalBlocks} blocks processed (${percentage}%)
+      </div>
+      <div class="progress-text">
+        Found ${progress.foundTransactions} timeboosted transactions
+        ${progress.estimatedTimeRemaining ? ` - Est. ${progress.estimatedTimeRemaining}s remaining` : ''}
+      </div>
+    </div>
+  `
+}
+
+function closeModal() {
+  document.getElementById('roundModal').style.display = 'none'
+}
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+  const modal = document.getElementById('roundModal')
+  if (event.target === modal) {
+    modal.style.display = 'none'
   }
 }
 

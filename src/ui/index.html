@@ -219,6 +219,99 @@
         .link:hover {
             text-decoration: underline;
         }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            overflow: auto;
+        }
+        
+        .modal-content {
+            background-color: #18181b;
+            margin: 5% auto;
+            padding: 30px;
+            border: 1px solid #27272a;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 1000px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .close {
+            color: #71717a;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            line-height: 20px;
+        }
+        
+        .close:hover {
+            color: #e4e4e7;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #27272a;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: #60a5fa;
+            transition: width 0.3s ease;
+        }
+        
+        .progress-text {
+            text-align: center;
+            margin-top: 5px;
+            color: #71717a;
+            font-size: 0.9rem;
+        }
+        
+        .round-details {
+            margin-bottom: 30px;
+        }
+        
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #27272a;
+        }
+        
+        .detail-label {
+            color: #71717a;
+        }
+        
+        .detail-value {
+            color: #e4e4e7;
+            text-align: right;
+        }
+        
+        .clickable-row {
+            cursor: pointer;
+        }
+        
+        .clickable-row:hover {
+            background: #27272a;
+        }
     </style>
 </head>
 <body>
@@ -253,6 +346,19 @@
             <h2 class="section-title">Recent Rounds</h2>
             <div id="rounds">
                 <div class="loading"><span class="spinner"></span>Loading rounds...</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal for round details -->
+    <div id="roundModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">Round Details</h2>
+                <span class="close" onclick="closeModal()">&times;</span>
+            </div>
+            <div id="modalContent">
+                <div class="loading"><span class="spinner"></span>Loading round details...</div>
             </div>
         </div>
     </div>

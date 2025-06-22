@@ -4,6 +4,7 @@ import path from 'path'
 import { ethers } from 'ethers'
 import { EventMonitor } from './core/EventMonitor'
 import { EventParser } from './core/EventParser'
+import { TransactionIndexer, IndexerProgress } from './core/TransactionIndexer'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -20,6 +21,7 @@ app.use(express.static(path.join(__dirname, '../ui')))
 // Initialize components
 const eventMonitor = new EventMonitor(RPC_URL)
 const eventParser = new EventParser()
+const transactionIndexer = new TransactionIndexer(RPC_URL)
 
 // Cache for data
 let cachedData = {
@@ -29,6 +31,9 @@ let cachedData = {
   lastUpdate: 0,
   startBlock: 0
 }
+
+// Indexer progress tracking
+let indexerProgress: IndexerProgress | null = null
 
 const CACHE_DURATION = 30000 // 30 seconds
 
@@ -175,6 +180,21 @@ app.get('/api/rounds/:round', async (req, res) => {
       return res.status(404).json({ error: 'Round not found' })
     }
     
+    // Set progress callback for this request
+    transactionIndexer.setProgressCallback((progress) => {
+      indexerProgress = progress
+    })
+    
+    // Fetch timeboosted transactions for this round
+    let transactions: any[] = []
+    try {
+      const startTime = Number(round.startTimestamp)
+      const endTime = Number(round.endTimestamp)
+      transactions = await transactionIndexer.getTimeboostedTransactionsForRound(startTime, endTime)
+    } catch (txError) {
+      console.error('Error fetching timeboosted transactions:', txError)
+    }
+    
     return res.json({
       round: round.round.toString(),
       startTimestamp: Number(round.startTimestamp),
@@ -186,7 +206,17 @@ app.get('/api/rounds/:round', async (req, res) => {
       pricePaid: round.pricePaid ? eventParser.formatEther(round.pricePaid) : null,
       pricePaidUSD: round.pricePaid ? eventParser.formatUSD(round.pricePaid, ETH_PRICE) : null,
       auctionTransactionHash: round.auctionTransactionHash,
-      transactions: []
+      transactions: transactions.map(tx => ({
+        hash: tx.hash,
+        blockNumber: tx.blockNumber,
+        timestamp: tx.timestamp,
+        from: tx.from,
+        to: tx.to,
+        value: eventParser.formatEther(tx.value),
+        gasUsed: tx.gasUsed.toString(),
+        effectiveGasPrice: eventParser.formatEther(tx.effectiveGasPrice),
+        arbiscanUrl: `https://arbiscan.io/tx/${tx.hash}`
+      }))
     })
   } catch (error) {
     console.error('Error in /api/rounds/:round:', error)
@@ -226,6 +256,17 @@ app.get('/api/rounds', async (req, res) => {
     console.error('Error in /api/rounds:', error)
     return res.status(500).json({ error: 'Internal server error' })
   }
+})
+
+app.get('/api/indexer/progress', (req, res) => {
+  if (!indexerProgress) {
+    return res.json({ status: 'idle' })
+  }
+  
+  return res.json({
+    status: 'indexing',
+    progress: indexerProgress
+  })
 })
 
 app.get('/health', (req, res) => {

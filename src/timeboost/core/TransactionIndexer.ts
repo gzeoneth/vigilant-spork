@@ -2,8 +2,18 @@ import { ethers } from 'ethers'
 import { TimeboostedTransaction } from './types'
 import { BatchProvider } from './BatchProvider'
 
+export interface IndexerProgress {
+  currentBlock: number
+  totalBlocks: number
+  processedBlocks: number
+  foundTransactions: number
+  startTime: number
+  estimatedTimeRemaining?: number
+}
+
 export class TransactionIndexer {
   private provider: BatchProvider
+  private progressCallback?: (progress: IndexerProgress) => void
 
   constructor(rpcUrl: string) {
     this.provider = new BatchProvider(rpcUrl, {
@@ -13,12 +23,19 @@ export class TransactionIndexer {
     })
   }
 
+  setProgressCallback(callback: (progress: IndexerProgress) => void) {
+    this.progressCallback = callback
+  }
+
   async getTimeboostedTransactions(
     fromBlock: number,
     toBlock: number
   ): Promise<TimeboostedTransaction[]> {
     const timeboostedTxs: TimeboostedTransaction[] = []
     const batchSize = 10 // Process blocks in batches
+    const totalBlocks = toBlock - fromBlock + 1
+    const startTime = Date.now()
+    let processedBlocks = 0
 
     for (let blockNum = fromBlock; blockNum <= toBlock; blockNum += batchSize) {
       const endBlock = Math.min(blockNum + batchSize - 1, toBlock)
@@ -29,6 +46,24 @@ export class TransactionIndexer {
       }
 
       await Promise.all(promises)
+      processedBlocks = endBlock - fromBlock + 1
+
+      // Report progress
+      if (this.progressCallback) {
+        const elapsedTime = Date.now() - startTime
+        const blocksPerMs = processedBlocks / elapsedTime
+        const remainingBlocks = totalBlocks - processedBlocks
+        const estimatedTimeRemaining = remainingBlocks / blocksPerMs
+
+        this.progressCallback({
+          currentBlock: endBlock,
+          totalBlocks,
+          processedBlocks,
+          foundTransactions: timeboostedTxs.length,
+          startTime,
+          estimatedTimeRemaining: Math.round(estimatedTimeRemaining / 1000), // in seconds
+        })
+      }
     }
 
     return timeboostedTxs.sort((a, b) => a.blockNumber - b.blockNumber)
@@ -43,7 +78,7 @@ export class TransactionIndexer {
       if (!block || !block.transactions) return
 
       // Get all transaction hashes
-      const txHashes = block.transactions.map((tx): string =>
+      const txHashes = block.transactions.map((tx: string | ethers.TransactionResponse) =>
         typeof tx === 'string' ? tx : tx.hash
       )
 
@@ -75,7 +110,7 @@ export class TransactionIndexer {
             to: receipt.to || '',
             value: tx.value,
             gasUsed: receipt.gasUsed,
-            effectiveGasPrice: receipt.gasPrice || 0n,
+            effectiveGasPrice: (receipt as any).effectiveGasPrice?.toBigInt() || 0n,
             timeboosted: true,
           })
         }
@@ -93,12 +128,10 @@ export class TransactionIndexer {
       const rawReceipt = await this.provider.send('eth_getTransactionReceipt', [
         receipt.hash,
       ])
-      return rawReceipt.timeboosted === true
+      return rawReceipt.timeboosted === true || rawReceipt.timeBoosted === true
     } catch (error) {
-      // Fallback: check if transaction is to the auction contract
-      const AUCTION_ADDRESS =
-        '0x5fcb496a31b7AE91e7c9078Ec662bd7A55cd3079'.toLowerCase()
-      return receipt.to?.toLowerCase() === AUCTION_ADDRESS
+      console.error('Error checking timeboosted status:', error)
+      return false
     }
   }
 
