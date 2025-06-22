@@ -1,0 +1,220 @@
+const API_URL = 'http://localhost:3001/api'
+
+let isLoading = false
+let isConnected = false
+
+async function fetchData(endpoint) {
+  try {
+    const response = await fetch(`${API_URL}${endpoint}`)
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+    if (!isConnected) {
+      setConnectionStatus(true)
+    }
+    return await response.json()
+  } catch (error) {
+    console.error(`Error fetching ${endpoint}:`, error)
+    setConnectionStatus(false)
+    showError(`Failed to fetch data from ${endpoint}`)
+    return null
+  }
+}
+
+function setConnectionStatus(connected) {
+  isConnected = connected
+  const indicator = document.getElementById('status-indicator')
+  const text = document.getElementById('status-text')
+
+  if (connected) {
+    indicator.classList.remove('error')
+    text.textContent = 'Connected'
+  } else {
+    indicator.classList.add('error')
+    text.textContent = 'Disconnected'
+  }
+}
+
+function showError(message) {
+  const errorContainer = document.getElementById('error-container')
+  errorContainer.innerHTML = `<div class="error">${message}</div>`
+  setTimeout(() => {
+    errorContainer.innerHTML = ''
+  }, 5000)
+}
+
+function formatAddress(address) {
+  if (!address) return ''
+  return `${address.slice(0, 6)}...${address.slice(-4)}`
+}
+
+function formatTimestamp(timestamp) {
+  return new Date(timestamp * 1000).toLocaleString()
+}
+
+async function loadMetrics() {
+  const metrics = await fetchData('/metrics')
+  if (!metrics) return
+
+  const metricsContainer = document.getElementById('metrics')
+  metricsContainer.innerHTML = `
+        <div class="metric-card">
+            <div class="metric-label">Total Rounds</div>
+            <div class="metric-value">${metrics.totalRounds.toLocaleString()}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Total Revenue</div>
+            <div class="metric-value">${parseFloat(metrics.totalRevenue).toFixed(4)} ETH</div>
+            <div class="metric-usd">$${parseFloat(metrics.totalRevenueUSD).toLocaleString()}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Average Price/Round</div>
+            <div class="metric-value">${parseFloat(metrics.averagePricePerRound).toFixed(4)} ETH</div>
+            <div class="metric-usd">$${parseFloat(metrics.averagePricePerRoundUSD).toFixed(2)}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Last Processed Block</div>
+            <div class="metric-value">${metrics.lastProcessedBlock.toLocaleString()}</div>
+        </div>
+    `
+}
+
+async function loadBidders() {
+  const bidders = await fetchData('/bidders')
+  if (!bidders || bidders.length === 0) {
+    document.getElementById('bidders').innerHTML = '<p>No bidders found</p>'
+    return
+  }
+
+  const biddersHtml = `
+        <table>
+            <thead>
+                <tr>
+                    <th>Rank</th>
+                    <th>Bidder</th>
+                    <th>Address</th>
+                    <th>Rounds Won</th>
+                    <th>Total Spent</th>
+                    <th>Current Balance</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${bidders
+                  .slice(0, 10)
+                  .map(
+                    (bidder, index) => `
+                    <tr>
+                        <td>${index + 1}</td>
+                        <td>${bidder.label}</td>
+                        <td class="address">${formatAddress(bidder.address)}</td>
+                        <td>${bidder.roundsWon}</td>
+                        <td>
+                            ${parseFloat(bidder.totalSpent).toFixed(4)} ETH
+                            <br>
+                            <span class="metric-usd">$${parseFloat(bidder.totalSpentUSD).toLocaleString()}</span>
+                        </td>
+                        <td>
+                            ${parseFloat(bidder.currentBalance).toFixed(4)} ETH
+                            <br>
+                            <span class="metric-usd">$${parseFloat(bidder.currentBalanceUSD).toLocaleString()}</span>
+                        </td>
+                    </tr>
+                `
+                  )
+                  .join('')}
+            </tbody>
+        </table>
+    `
+
+  document.getElementById('bidders').innerHTML = biddersHtml
+}
+
+async function loadRounds() {
+  const data = await fetchData('/rounds/recent')
+  if (!data || data.length === 0) {
+    document.getElementById('rounds').innerHTML = '<p>No rounds found</p>'
+    return
+  }
+
+  const roundsHtml = `
+        <table>
+            <thead>
+                <tr>
+                    <th>Round</th>
+                    <th>Type</th>
+                    <th>Controller</th>
+                    <th>Winner</th>
+                    <th>Price Paid</th>
+                    <th>Transactions</th>
+                    <th>Time</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${data
+                  .map(
+                    round => `
+                    <tr>
+                        <td>${round.round}</td>
+                        <td>
+                            ${
+                              round.auctionType
+                                ? `<span class="auction-type ${round.auctionType}">${round.auctionType === 'multi' ? 'Multi-bid' : 'Single-bid'}</span>`
+                                : '-'
+                            }
+                        </td>
+                        <td class="address">
+                            ${
+                              round.expressLaneController
+                                ? `<a href="https://arbiscan.io/address/${round.expressLaneController}" target="_blank" class="transaction-link">
+                                    ${formatAddress(round.expressLaneController)}
+                                    <svg class="external-icon" viewBox="0 0 20 20" fill="currentColor">
+                                        <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
+                                        <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" />
+                                    </svg>
+                                </a>`
+                                : '-'
+                            }
+                        </td>
+                        <td class="address">
+                            ${round.winnerBidder ? formatAddress(round.winnerBidder) : '-'}
+                        </td>
+                        <td>
+                            ${
+                              round.pricePaid
+                                ? `${parseFloat(round.pricePaid).toFixed(4)} ETH<br>
+                                <span class="metric-usd">$${parseFloat(round.pricePaidUSD).toFixed(2)}</span>`
+                                : '-'
+                            }
+                        </td>
+                        <td>${round.transactionCount}</td>
+                        <td>${formatTimestamp(round.startTimestamp)}</td>
+                    </tr>
+                `
+                  )
+                  .join('')}
+            </tbody>
+        </table>
+    `
+
+  document.getElementById('rounds').innerHTML = roundsHtml
+}
+
+async function refreshData() {
+  if (isLoading) return
+
+  isLoading = true
+
+  try {
+    await Promise.all([loadMetrics(), loadBidders(), loadRounds()])
+  } catch (error) {
+    console.error('Error refreshing data:', error)
+  } finally {
+    isLoading = false
+  }
+}
+
+// Initial load
+refreshData()
+
+// Auto-refresh every 30 seconds
+setInterval(refreshData, 30000)
