@@ -162,7 +162,9 @@ export class BatchProvider extends ethers.JsonRpcProvider {
     // Create a new block object with transactions
     const blockWithTxs = {
       ...block,
-      transactions: transactions.filter(tx => tx !== null) as ethers.TransactionResponse[]
+      transactions: transactions.filter(
+        tx => tx !== null
+      ) as ethers.TransactionResponse[],
     }
     return blockWithTxs as any
   }

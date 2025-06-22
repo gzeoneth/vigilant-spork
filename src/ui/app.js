@@ -2,6 +2,8 @@ const API_URL = 'http://localhost:3001/api'
 
 let isLoading = false
 let isConnected = false
+let currentPage = 1
+let roundsPerPage = 20
 
 async function fetchData(endpoint) {
   try {
@@ -129,14 +131,20 @@ async function loadBidders() {
   document.getElementById('bidders').innerHTML = biddersHtml
 }
 
-async function loadRounds() {
-  const data = await fetchData('/rounds/recent')
-  if (!data || data.length === 0) {
+async function loadRounds(page = 1) {
+  currentPage = page
+  const data = await fetchData(`/rounds?page=${page}&limit=${roundsPerPage}`)
+  if (!data || !data.rounds || data.rounds.length === 0) {
     document.getElementById('rounds').innerHTML = '<p>No rounds found</p>'
     return
   }
 
   const roundsHtml = `
+        <div class="pagination" style="margin-bottom: 20px;">
+            <button ${!data.pagination.hasPrev ? 'disabled' : ''} onclick="loadRounds(${page - 1})">Previous</button>
+            <span>Page ${data.pagination.page} of ${data.pagination.totalPages} (${data.pagination.total} total rounds)</span>
+            <button ${!data.pagination.hasNext ? 'disabled' : ''} onclick="loadRounds(${page + 1})">Next</button>
+        </div>
         <table>
             <thead>
                 <tr>
@@ -146,12 +154,12 @@ async function loadRounds() {
                     <th>Winner</th>
                     <th>Price Paid</th>
                     <th>Auction Tx</th>
-                    <th>Transactions</th>
+                    <th>Status</th>
                     <th>Time</th>
                 </tr>
             </thead>
             <tbody>
-                ${data
+                ${data.rounds
                   .map(
                     round => `
                     <tr class="clickable-row" onclick="showRoundDetails('${round.round}')">
@@ -200,7 +208,19 @@ async function loadRounds() {
                                 : '-'
                             }
                         </td>
-                        <td>${round.transactionCount}</td>
+                        <td>
+                            ${
+                              round.indexStatus === 'completed'
+                                ? `<span style="color: #10b981;">${round.transactionCount} txs</span>`
+                                : round.indexStatus === 'indexing'
+                                  ? `<span style="color: #f59e0b;">Indexing...</span>`
+                                  : round.indexStatus === 'pending'
+                                    ? `<span style="color: #6b7280;">Queued</span>`
+                                    : round.indexStatus === 'error'
+                                      ? `<span style="color: #ef4444;">Error</span>`
+                                      : `<span style="color: #6b7280;">Not indexed</span>`
+                            }
+                        </td>
                         <td>${formatTimestamp(round.startTimestamp)}</td>
                     </tr>
                 `
@@ -208,6 +228,11 @@ async function loadRounds() {
                   .join('')}
             </tbody>
         </table>
+        <div class="pagination" style="margin-top: 20px;">
+            <button ${!data.pagination.hasPrev ? 'disabled' : ''} onclick="loadRounds(${page - 1})">Previous</button>
+            <span>Page ${data.pagination.page} of ${data.pagination.totalPages}</span>
+            <button ${!data.pagination.hasNext ? 'disabled' : ''} onclick="loadRounds(${page + 1})">Next</button>
+        </div>
     `
 
   document.getElementById('rounds').innerHTML = roundsHtml
@@ -232,27 +257,55 @@ function showRoundDetails(roundNumber) {
   const modal = document.getElementById('roundModal')
   const modalTitle = document.getElementById('modalTitle')
   const modalContent = document.getElementById('modalContent')
-  
+
   modal.style.display = 'block'
   modalTitle.textContent = `Round ${roundNumber} Details`
-  modalContent.innerHTML = '<div class="loading"><span class="spinner"></span>Loading round details...</div>'
-  
-  // Start progress monitoring
-  const progressInterval = setInterval(async () => {
-    const progress = await fetchData('/indexer/progress')
-    if (progress && progress.status === 'indexing') {
-      updateProgressDisplay(progress.progress)
-    }
-  }, 500)
-  
+  modalContent.innerHTML =
+    '<div class="loading"><span class="spinner"></span>Loading round details...</div>'
+
+  let progressInterval = null
+
   // Fetch round details
-  fetchData(`/rounds/${roundNumber}`).then(round => {
-    clearInterval(progressInterval)
+  fetchData(`/rounds/${roundNumber}`).then(async round => {
     if (!round) {
-      modalContent.innerHTML = '<div class="error">Failed to load round details</div>'
+      modalContent.innerHTML =
+        '<div class="error">Failed to load round details</div>'
       return
     }
-    
+
+    // If round is not indexed, start indexing
+    if (round.indexStatus === 'not_started') {
+      // Trigger indexing
+      await fetch(`${API_URL}/rounds/${roundNumber}/index`, { method: 'POST' })
+
+      // Start monitoring progress
+      progressInterval = setInterval(async () => {
+        const progress = await fetchData(
+          `/indexer/progress?round=${roundNumber}`
+        )
+        if (progress) {
+          updateIndexingStatus(round, progress)
+
+          if (progress.status === 'completed') {
+            clearInterval(progressInterval)
+            // Reload round details
+            showRoundDetails(roundNumber)
+          } else if (progress.status === 'error') {
+            clearInterval(progressInterval)
+          }
+        }
+      }, 500)
+    }
+
+    if (
+      progressInterval &&
+      round.indexStatus !== 'not_started' &&
+      round.indexStatus !== 'pending' &&
+      round.indexStatus !== 'indexing'
+    ) {
+      clearInterval(progressInterval)
+    }
+
     let transactionsHtml = ''
     if (round.transactions && round.transactions.length > 0) {
       transactionsHtml = `
@@ -270,7 +323,9 @@ function showRoundDetails(roundNumber) {
             </tr>
           </thead>
           <tbody>
-            ${round.transactions.map(tx => `
+            ${round.transactions
+              .map(
+                tx => `
               <tr>
                 <td>
                   <a href="${tx.arbiscanUrl}" target="_blank" class="transaction-link">
@@ -288,7 +343,9 @@ function showRoundDetails(roundNumber) {
                 <td>${tx.gasUsed}</td>
                 <td>${tx.effectiveGasPrice} ETH</td>
               </tr>
-            `).join('')}
+            `
+              )
+              .join('')}
           </tbody>
         </table>
       `
@@ -299,7 +356,7 @@ function showRoundDetails(roundNumber) {
         </div>
       `
     }
-    
+
     modalContent.innerHTML = `
       <div class="round-details">
         <div class="detail-row">
@@ -317,7 +374,9 @@ function showRoundDetails(roundNumber) {
         <div class="detail-row">
           <span class="detail-label">Express Lane Controller</span>
           <span class="detail-value">
-            ${round.expressLaneController ? `
+            ${
+              round.expressLaneController
+                ? `
               <a href="https://arbiscan.io/address/${round.expressLaneController}" target="_blank" class="transaction-link">
                 ${round.expressLaneController}
                 <svg class="external-icon" viewBox="0 0 20 20" fill="currentColor">
@@ -325,7 +384,9 @@ function showRoundDetails(roundNumber) {
                   <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" />
                 </svg>
               </a>
-            ` : 'None'}
+            `
+                : 'None'
+            }
           </span>
         </div>
         <div class="detail-row">
@@ -347,7 +408,9 @@ function showRoundDetails(roundNumber) {
         <div class="detail-row">
           <span class="detail-label">Auction Transaction</span>
           <span class="detail-value">
-            ${round.auctionTransactionHash ? `
+            ${
+              round.auctionTransactionHash
+                ? `
               <a href="https://arbiscan.io/tx/${round.auctionTransactionHash}" target="_blank" class="transaction-link">
                 ${formatAddress(round.auctionTransactionHash)}
                 <svg class="external-icon" viewBox="0 0 20 20" fill="currentColor">
@@ -355,7 +418,9 @@ function showRoundDetails(roundNumber) {
                   <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" />
                 </svg>
               </a>
-            ` : '-'}
+            `
+                : '-'
+            }
           </span>
         </div>
       </div>
@@ -368,9 +433,11 @@ function showRoundDetails(roundNumber) {
 function updateProgressDisplay(progress) {
   const progressContainer = document.getElementById('progressContainer')
   if (!progressContainer) return
-  
-  const percentage = Math.round((progress.processedBlocks / progress.totalBlocks) * 100)
-  
+
+  const percentage = Math.round(
+    (progress.processedBlocks / progress.totalBlocks) * 100
+  )
+
   progressContainer.innerHTML = `
     <div style="margin: 20px 0; padding: 20px; background: #27272a; border-radius: 8px;">
       <h3 style="margin-bottom: 10px;">Indexing Progress</h3>
@@ -388,12 +455,47 @@ function updateProgressDisplay(progress) {
   `
 }
 
+function updateIndexingStatus(round, progress) {
+  const modalContent = document.getElementById('modalContent')
+  if (!modalContent) return
+
+  let statusMessage = ''
+  if (progress.status === 'pending') {
+    statusMessage = 'Waiting in queue...'
+  } else if (progress.status === 'indexing') {
+    statusMessage = `Indexing... Found ${progress.transactionCount} transactions`
+  } else if (progress.status === 'error') {
+    statusMessage = `Error: ${progress.error || 'Unknown error'}`
+  }
+
+  modalContent.innerHTML = `
+    <div class="round-details">
+      <div class="detail-row">
+        <span class="detail-label">Round Number</span>
+        <span class="detail-value">${round.round}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Status</span>
+        <span class="detail-value">${statusMessage}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Start Time</span>
+        <span class="detail-value">${formatTimestamp(round.startTimestamp)}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">End Time</span>
+        <span class="detail-value">${formatTimestamp(round.endTimestamp)}</span>
+      </div>
+    </div>
+  `
+}
+
 function closeModal() {
   document.getElementById('roundModal').style.display = 'none'
 }
 
 // Close modal when clicking outside
-window.onclick = function(event) {
+window.onclick = function (event) {
   const modal = document.getElementById('roundModal')
   if (event.target === modal) {
     modal.style.display = 'none'

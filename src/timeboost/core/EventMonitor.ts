@@ -28,7 +28,11 @@ export class EventMonitor {
     eventName?: string
   ): Promise<AllTimeboostEvents[]> {
     const logs = eventName
-      ? await this.contract.queryFilter(this.contract.filters[eventName](), fromBlock, toBlock)
+      ? await this.contract.queryFilter(
+          this.contract.filters[eventName](),
+          fromBlock,
+          toBlock
+        )
       : await this.contract.queryFilter('*', fromBlock, toBlock)
     const events: AllTimeboostEvents[] = []
 

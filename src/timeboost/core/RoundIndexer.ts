@@ -1,0 +1,226 @@
+import { ethers } from 'ethers'
+import { TransactionIndexer } from './TransactionIndexer'
+import { RoundInfo, TimeboostedTransaction } from './types'
+import fs from 'fs/promises'
+import path from 'path'
+
+export interface RoundIndexStatus {
+  round: string
+  status: 'pending' | 'indexing' | 'completed' | 'error'
+  transactionCount: number
+  lastIndexed?: number
+  error?: string
+}
+
+export interface IndexedRound {
+  round: string
+  startTimestamp: number
+  endTimestamp: number
+  transactions: TimeboostedTransaction[]
+  indexedAt: number
+}
+
+export class RoundIndexer {
+  private indexer: TransactionIndexer
+  private cacheDir: string
+  private indexingQueue: Array<{ roundKey: string; roundInfo: RoundInfo }> = []
+  private currentlyIndexing: string | null = null
+  private roundStatus: Map<string, RoundIndexStatus> = new Map()
+  private isProcessing = false
+
+  constructor(rpcUrl: string, cacheDir: string = './cache/rounds') {
+    this.indexer = new TransactionIndexer(rpcUrl)
+    this.cacheDir = cacheDir
+    this.initializeCacheDir()
+  }
+
+  private async initializeCacheDir() {
+    try {
+      await fs.mkdir(this.cacheDir, { recursive: true })
+    } catch (error) {
+      console.error('Error creating cache directory:', error)
+    }
+  }
+
+  private getCacheFilePath(round: string): string {
+    return path.join(this.cacheDir, `round-${round}.json`)
+  }
+
+  async getCachedRound(round: string): Promise<IndexedRound | null> {
+    try {
+      const filePath = this.getCacheFilePath(round)
+      const data = await fs.readFile(filePath, 'utf-8')
+      return JSON.parse(data)
+    } catch (error) {
+      return null
+    }
+  }
+
+  private async cacheRound(round: string, data: IndexedRound) {
+    try {
+      const filePath = this.getCacheFilePath(round)
+      await fs.writeFile(filePath, JSON.stringify(data, null, 2))
+    } catch (error) {
+      console.error(`Error caching round ${round}:`, error)
+    }
+  }
+
+  async indexRound(
+    roundInfo: RoundInfo,
+    onProgress?: (status: RoundIndexStatus) => void
+  ): Promise<IndexedRound> {
+    const roundKey = roundInfo.round.toString()
+
+    // Check cache first
+    const cached = await this.getCachedRound(roundKey)
+    if (cached) {
+      this.roundStatus.set(roundKey, {
+        round: roundKey,
+        status: 'completed',
+        transactionCount: cached.transactions.length,
+        lastIndexed: cached.indexedAt,
+      })
+      return cached
+    }
+
+    // Add to queue if not already present
+    const inQueue = this.indexingQueue.some(item => item.roundKey === roundKey)
+    if (!inQueue && this.currentlyIndexing !== roundKey) {
+      this.indexingQueue.push({ roundKey, roundInfo })
+    }
+
+    // Update status to pending
+    this.roundStatus.set(roundKey, {
+      round: roundKey,
+      status: 'pending',
+      transactionCount: 0,
+    })
+
+    // Start processing queue if not already processing
+    if (!this.isProcessing) {
+      this.processQueue()
+    }
+
+    // Wait for this round to be indexed
+    return new Promise((resolve, reject) => {
+      const checkInterval = setInterval(async () => {
+        const status = this.roundStatus.get(roundKey)
+
+        if (status) {
+          if (onProgress) {
+            onProgress(status)
+          }
+
+          if (status.status === 'completed') {
+            clearInterval(checkInterval)
+            const cached = await this.getCachedRound(roundKey)
+            if (cached) {
+              resolve(cached)
+            } else {
+              reject(new Error('Round indexed but cache not found'))
+            }
+          } else if (status.status === 'error') {
+            clearInterval(checkInterval)
+            reject(new Error(status.error || 'Indexing failed'))
+          }
+        }
+      }, 500)
+    })
+  }
+
+  private async processQueue() {
+    if (this.isProcessing || this.indexingQueue.length === 0) {
+      return
+    }
+
+    this.isProcessing = true
+
+    while (this.indexingQueue.length > 0) {
+      const { roundKey, roundInfo } = this.indexingQueue.shift()!
+      this.currentlyIndexing = roundKey
+
+      try {
+        // Update status to indexing
+        this.roundStatus.set(roundKey, {
+          round: roundKey,
+          status: 'indexing',
+          transactionCount: 0,
+        })
+
+        const startTimestamp = Number(roundInfo.startTimestamp)
+        const endTimestamp = Number(roundInfo.endTimestamp)
+
+        // Set progress callback
+        this.indexer.setProgressCallback(progress => {
+          this.roundStatus.set(roundKey, {
+            round: roundKey,
+            status: 'indexing',
+            transactionCount: progress.foundTransactions,
+          })
+        })
+
+        // Index transactions
+        const transactions =
+          await this.indexer.getTimeboostedTransactionsForRound(
+            startTimestamp,
+            endTimestamp
+          )
+
+        // Cache the result
+        const indexedRound: IndexedRound = {
+          round: roundKey,
+          startTimestamp,
+          endTimestamp,
+          transactions,
+          indexedAt: Date.now(),
+        }
+
+        await this.cacheRound(roundKey, indexedRound)
+
+        // Update status to completed
+        this.roundStatus.set(roundKey, {
+          round: roundKey,
+          status: 'completed',
+          transactionCount: transactions.length,
+          lastIndexed: Date.now(),
+        })
+      } catch (error) {
+        console.error(`Error indexing round ${roundKey}:`, error)
+        this.roundStatus.set(roundKey, {
+          round: roundKey,
+          status: 'error',
+          transactionCount: 0,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        })
+      }
+
+      this.currentlyIndexing = null
+
+      // Add delay between rounds to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+
+    this.isProcessing = false
+  }
+
+  getRoundStatus(round: string): RoundIndexStatus | null {
+    return this.roundStatus.get(round) || null
+  }
+
+  getAllRoundStatuses(): RoundIndexStatus[] {
+    return Array.from(this.roundStatus.values())
+  }
+
+  async clearCache() {
+    try {
+      const files = await fs.readdir(this.cacheDir)
+      for (const file of files) {
+        if (file.startsWith('round-') && file.endsWith('.json')) {
+          await fs.unlink(path.join(this.cacheDir, file))
+        }
+      }
+    } catch (error) {
+      console.error('Error clearing cache:', error)
+    }
+  }
+}

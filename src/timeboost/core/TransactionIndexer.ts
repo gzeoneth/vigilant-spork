@@ -78,8 +78,9 @@ export class TransactionIndexer {
       if (!block || !block.transactions) return
 
       // Get all transaction hashes
-      const txHashes = block.transactions.map((tx: string | ethers.TransactionResponse) =>
-        typeof tx === 'string' ? tx : tx.hash
+      const txHashes = block.transactions.map(
+        (tx: string | ethers.TransactionResponse) =>
+          typeof tx === 'string' ? tx : tx.hash
       )
 
       // Batch fetch all receipts
@@ -110,7 +111,8 @@ export class TransactionIndexer {
             to: receipt.to || '',
             value: tx.value,
             gasUsed: receipt.gasUsed,
-            effectiveGasPrice: (receipt as any).effectiveGasPrice?.toBigInt() || 0n,
+            effectiveGasPrice:
+              (receipt as any).effectiveGasPrice?.toBigInt() || 0n,
             timeboosted: true,
           })
         }

@@ -14,5 +14,6 @@
     "noImplicitThis": true,
     "experimentalDecorators": true
   },
-  "exclude": ["./lib/"]
+  "include": ["**/*.ts", "test/types/global.d.ts"],
+  "exclude": ["./lib/", "node_modules"]
 }
