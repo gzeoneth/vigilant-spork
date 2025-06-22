@@ -160,10 +160,11 @@ export class BatchProvider extends ethers.JsonRpcProvider {
     const transactions = await Promise.all(txPromises)
 
     // Create a new block object with transactions
-    return {
+    const blockWithTxs = {
       ...block,
-      transactions: transactions.filter(tx => tx !== null)
-    } as ethers.Block
+      transactions: transactions.filter(tx => tx !== null) as ethers.TransactionResponse[]
+    }
+    return blockWithTxs as any
   }
 
   async getTransactionReceipts(
