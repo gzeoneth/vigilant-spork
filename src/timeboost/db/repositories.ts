@@ -93,6 +93,43 @@ export class RoundRepository {
 
     stmt.run(lastBlock, roundNumber)
   }
+
+  async findPartiallyIndexed(limit: number = 10): Promise<RoundRecord[]> {
+    const stmt = this.db['db'].prepare(`
+      SELECT r.* FROM rounds r
+      LEFT JOIN indexing_status s ON r.round_number = s.round_number
+      WHERE r.indexed = 0 
+      AND s.status = 'indexing'
+      AND s.started_at < datetime('now', '-30 minutes')
+      ORDER BY r.round_number ASC 
+      LIMIT ?
+    `)
+
+    const rows = stmt.all(limit) as any[]
+
+    return rows.map(row => ({
+      ...row,
+      auction_closed: Boolean(row.auction_closed),
+      indexed: false,
+    })) as RoundRecord[]
+  }
+
+  async findGapRounds(minRound: number, maxRound: number): Promise<number[]> {
+    const stmt = this.db['db'].prepare(`
+      WITH RECURSIVE 
+      range_cte(n) AS (
+        SELECT ?
+        UNION ALL
+        SELECT n + 1 FROM range_cte WHERE n < ?
+      )
+      SELECT n as round_number FROM range_cte
+      WHERE n NOT IN (SELECT round_number FROM rounds WHERE indexed = 1)
+      ORDER BY n ASC
+    `)
+
+    const rows = stmt.all(minRound, maxRound) as { round_number: number }[]
+    return rows.map(row => row.round_number)
+  }
 }
 
 export class TransactionRepository {

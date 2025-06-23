@@ -201,4 +201,34 @@ export class EventMonitor {
       reserveSubmissionSeconds: info.reserveSubmissionSeconds,
     }
   }
+
+  async getEventsForRoundBlocks(
+    roundNumber: bigint,
+    startBlock: number,
+    endBlock: number
+  ): Promise<AllTimeboostEvents[]> {
+    // Fetch events related to this specific round number
+    const auctionEvents = await this.getEvents(
+      startBlock,
+      endBlock,
+      'AuctionResolved'
+    )
+    const controllerEvents = await this.getEvents(
+      startBlock,
+      endBlock,
+      'SetExpressLaneController'
+    )
+    
+    // Filter events that belong to this round
+    const roundEvents = [...auctionEvents, ...controllerEvents].filter(event => {
+      if (event.name === 'AuctionResolved') {
+        return event.args.round === roundNumber
+      } else if (event.name === 'SetExpressLaneController') {
+        return event.args.round === roundNumber
+      }
+      return false
+    })
+    
+    return roundEvents
+  }
 }

@@ -3,6 +3,7 @@ import { TimeboostedTransaction } from './types'
 import { BatchProvider } from './BatchProvider'
 import { logger } from './Logger'
 import { AdaptiveRateLimiter } from './AdaptiveRateLimiter'
+import { BlockTimestampCache } from './BlockTimestampCache'
 
 // Configuration constants
 const _INDEXER_CONFIG = {
@@ -27,6 +28,7 @@ export class TransactionIndexer {
   private provider: BatchProvider
   private progressCallback?: (progress: IndexerProgress) => void
   private adaptiveRateLimiter: AdaptiveRateLimiter
+  private blockCache: BlockTimestampCache
 
   constructor(rpcUrl: string) {
     // Initialize adaptive rate limiter with conservative settings
@@ -48,6 +50,9 @@ export class TransactionIndexer {
       batchDelay: 100,
       requestsPerSecond: 10, // Base rate, will be controlled by adaptive limiter
     })
+
+    // Initialize block timestamp cache
+    this.blockCache = new BlockTimestampCache()
   }
 
   setProgressCallback(callback: (progress: IndexerProgress) => void) {
@@ -266,22 +271,67 @@ export class TransactionIndexer {
     position: 'before' | 'after'
   ): Promise<number | null> {
     try {
+      // Check if we have exact match in cache
+      const exactBlocks = this.blockCache.getBlocksByTimestamp(targetTimestamp)
+      if (exactBlocks.length > 0) {
+        return position === 'before' 
+          ? exactBlocks[exactBlocks.length - 1] 
+          : exactBlocks[0]
+      }
+
+      // Get closest cached blocks to narrow search range
+      const closest = this.blockCache.getClosestBlocks(targetTimestamp)
+      
       const latestBlock = await this.provider.getBlock('latest')
       if (!latestBlock) return null
+
+      // Cache latest block
+      this.blockCache.set(latestBlock.number, latestBlock.timestamp)
 
       let low = 1
       let high = latestBlock.number
 
+      // Use cache to narrow search range
+      if (closest.before && closest.before.timestamp < targetTimestamp) {
+        low = closest.before.blockNumber
+      }
+      if (closest.after && closest.after.timestamp > targetTimestamp) {
+        high = closest.after.blockNumber
+      }
+
+      // Check for sequential access pattern (useful for round-by-round processing)
+      const hintKey = `${targetTimestamp}-${position}`
+      const lastHint = this.blockCache.getSequentialHint(hintKey)
+      if (lastHint && lastHint > low && lastHint < high) {
+        // Start search near the last accessed block for this pattern
+        const hintBlock = await this.provider.getBlock(lastHint)
+        if (hintBlock) {
+          this.blockCache.set(lastHint, hintBlock.timestamp)
+          if (hintBlock.timestamp < targetTimestamp) {
+            low = lastHint
+          } else {
+            high = lastHint
+          }
+        }
+      }
+
       // Binary search for the block
       while (low <= high) {
         const mid = Math.floor((low + high) / 2)
-        const block = await this.provider.getBlock(mid)
+        
+        // Check cache first
+        let midTimestamp = this.blockCache.get(mid)
+        if (midTimestamp === undefined) {
+          const block = await this.provider.getBlock(mid)
+          if (!block) continue
+          midTimestamp = block.timestamp
+          this.blockCache.set(mid, midTimestamp)
+        }
 
-        if (!block) continue
-
-        if (block.timestamp === targetTimestamp) {
+        if (midTimestamp === targetTimestamp) {
+          this.blockCache.setSequentialHint(hintKey, mid)
           return mid
-        } else if (block.timestamp < targetTimestamp) {
+        } else if (midTimestamp < targetTimestamp) {
           low = mid + 1
         } else {
           high = mid - 1
@@ -289,11 +339,9 @@ export class TransactionIndexer {
       }
 
       // Return the appropriate block based on position
-      if (position === 'before') {
-        return high
-      } else {
-        return low
-      }
+      const result = position === 'before' ? high : low
+      this.blockCache.setSequentialHint(hintKey, result)
+      return result
     } catch (error) {
       logger.error(
         'TransactionIndexer',
@@ -323,5 +371,6 @@ export class TransactionIndexer {
   destroy() {
     this.adaptiveRateLimiter.destroy()
     this.provider.destroy()
+    this.blockCache.clear()
   }
 }

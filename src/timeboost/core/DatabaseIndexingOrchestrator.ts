@@ -14,6 +14,11 @@ const ORCHESTRATOR_CONFIG = {
   INITIAL_HIGH_PRIORITY_ROUNDS: 5,
   MAX_UNINDEXED_ROUNDS_FETCH: 100,
   MAX_FAILED_INDEXING_FETCH: 10,
+  // Intelligent backfill configuration
+  IDLE_THRESHOLD_MS: 30000, // Consider system idle after 30 seconds
+  IDLE_BATCH_SIZE: 10, // Process more rounds when idle
+  GAP_CHECK_INTERVAL_MS: 120000, // Check for gaps every 2 minutes
+  MAX_GAP_SIZE: 1000, // Maximum gap size to process at once
 }
 
 export class DatabaseIndexingOrchestrator {
@@ -23,10 +28,13 @@ export class DatabaseIndexingOrchestrator {
   private isRunning: boolean = false
   private indexingInterval: NodeJS.Timeout | null = null
   private backfillInterval: NodeJS.Timeout | null = null
+  private gapCheckInterval: NodeJS.Timeout | null = null
   private lastIndexedRound: bigint | null = null
   private oldestIndexedRound: bigint | null = null
   private indexingQueue: Set<bigint> = new Set()
   private backfillQueue: Set<bigint> = new Set()
+  private lastActivityTime: number = Date.now()
+  private identifiedGaps: Array<{ start: bigint; end: bigint }> = []
 
   constructor(
     roundIndexer: RoundIndexer,
@@ -66,7 +74,7 @@ export class DatabaseIndexingOrchestrator {
 
     // Start backfill process
     this.backfillInterval = setInterval(() => {
-      this.backfillOlderRounds().catch(error => {
+      this.intelligentBackfill().catch(error => {
         logger.error(
           'DatabaseIndexingOrchestrator',
           'Error in backfill process',
@@ -74,6 +82,17 @@ export class DatabaseIndexingOrchestrator {
         )
       })
     }, ORCHESTRATOR_CONFIG.BACKFILL_INTERVAL_MS)
+
+    // Start gap detection process
+    this.gapCheckInterval = setInterval(() => {
+      this.detectAndFillGaps().catch(error => {
+        logger.error(
+          'DatabaseIndexingOrchestrator',
+          'Error in gap detection',
+          error
+        )
+      })
+    }, ORCHESTRATOR_CONFIG.GAP_CHECK_INTERVAL_MS)
 
     // Process queues
     this.processQueues()
@@ -88,6 +107,10 @@ export class DatabaseIndexingOrchestrator {
     if (this.backfillInterval) {
       clearInterval(this.backfillInterval)
       this.backfillInterval = null
+    }
+    if (this.gapCheckInterval) {
+      clearInterval(this.gapCheckInterval)
+      this.gapCheckInterval = null
     }
     logger.info('DatabaseIndexingOrchestrator', 'Stopped automatic indexing')
   }
@@ -232,27 +255,47 @@ export class DatabaseIndexingOrchestrator {
     }
   }
 
-  private async backfillOlderRounds(): Promise<void> {
-    if (!this.oldestIndexedRound || this.backfillQueue.size === 0) return
-
-    // Only backfill if we're not busy with real-time indexing
+  private async intelligentBackfill(): Promise<void> {
     const activeIndexing = this.roundIndexer
       .getAllRoundStatuses()
       .filter(s => s.status === 'indexing' || s.status === 'pending').length
 
-    if (activeIndexing > ORCHESTRATOR_CONFIG.MAX_CONCURRENT_INDEXING) {
+    // Determine if system is idle
+    const isIdle = Date.now() - this.lastActivityTime > ORCHESTRATOR_CONFIG.IDLE_THRESHOLD_MS
+    const batchSize = isIdle 
+      ? ORCHESTRATOR_CONFIG.IDLE_BATCH_SIZE 
+      : ORCHESTRATOR_CONFIG.BATCH_SIZE_PER_ITERATION
+
+    // More aggressive indexing when idle
+    const maxConcurrent = isIdle 
+      ? ORCHESTRATOR_CONFIG.MAX_CONCURRENT_INDEXING * 2 
+      : ORCHESTRATOR_CONFIG.MAX_CONCURRENT_INDEXING
+
+    if (activeIndexing >= maxConcurrent) {
       logger.debug(
         'DatabaseIndexingOrchestrator',
-        `Skipping backfill, ${activeIndexing} rounds currently indexing`
+        `Skipping backfill, ${activeIndexing} rounds currently indexing (max: ${maxConcurrent})`
       )
       return
     }
 
-    // Move some rounds from backfill queue to indexing queue
-    const roundsToBackfill = Array.from(this.backfillQueue).slice(
-      0,
-      ORCHESTRATOR_CONFIG.BATCH_SIZE_PER_ITERATION
-    )
+    // Prioritize gap rounds first
+    const gapRounds = await this.getGapRounds(batchSize)
+    if (gapRounds.length > 0) {
+      logger.info(
+        'DatabaseIndexingOrchestrator',
+        `Found ${gapRounds.length} gap rounds to index`
+      )
+      gapRounds.forEach(round => {
+        this.indexingQueue.add(round)
+      })
+      return
+    }
+
+    // Fall back to regular backfill queue
+    if (this.backfillQueue.size === 0) return
+
+    const roundsToBackfill = Array.from(this.backfillQueue).slice(0, batchSize)
     roundsToBackfill.forEach(round => {
       this.backfillQueue.delete(round)
       this.indexingQueue.add(round)
@@ -264,9 +307,79 @@ export class DatabaseIndexingOrchestrator {
     if (roundsToBackfill.length > 0) {
       logger.info(
         'DatabaseIndexingOrchestrator',
-        `Moving ${roundsToBackfill.length} rounds to backfill queue`
+        `Moving ${roundsToBackfill.length} rounds to indexing queue (idle: ${isIdle})`
       )
     }
+  }
+
+  private async detectAndFillGaps(): Promise<void> {
+    try {
+      // Get all indexed rounds to find gaps
+      const indexedRounds = await this.repository.rounds.findAll(1, 10000)
+      const roundNumbers = indexedRounds.rounds
+        .filter(r => r.indexed)
+        .map(r => BigInt(r.round_number))
+        .sort((a, b) => Number(a - b))
+
+      if (roundNumbers.length < 2) return
+
+      // Find gaps in indexed rounds
+      const gaps: Array<{ start: bigint; end: bigint }> = []
+      for (let i = 0; i < roundNumbers.length - 1; i++) {
+        const current = roundNumbers[i]
+        const next = roundNumbers[i + 1]
+        const diff = Number(next - current)
+        
+        if (diff > 1) {
+          gaps.push({
+            start: current + 1n,
+            end: next - 1n
+          })
+        }
+      }
+
+      if (gaps.length > 0) {
+        this.identifiedGaps = gaps
+        logger.info(
+          'DatabaseIndexingOrchestrator',
+          `Detected ${gaps.length} gaps in indexed rounds`
+        )
+      }
+
+      // Also check for partially indexed rounds (rounds that started but didn't complete)
+      const partiallyIndexed = await this.repository.indexingStatus.findPending(50)
+      partiallyIndexed.forEach(status => {
+        this.indexingQueue.add(BigInt(status.round_number))
+      })
+    } catch (error) {
+      logger.error(
+        'DatabaseIndexingOrchestrator',
+        'Error detecting gaps',
+        error
+      )
+    }
+  }
+
+  private async getGapRounds(limit: number): Promise<bigint[]> {
+    const gapRounds: bigint[] = []
+    
+    for (const gap of this.identifiedGaps) {
+      const gapSize = Number(gap.end - gap.start) + 1
+      const roundsToTake = Math.min(gapSize, limit - gapRounds.length)
+      
+      for (let i = 0; i < roundsToTake; i++) {
+        const roundNumber = gap.start + BigInt(i)
+        const round = this.eventParser.getRoundInfo(roundNumber)
+        
+        if (round && !(await this.isRoundInDatabase(roundNumber))) {
+          gapRounds.push(roundNumber)
+        }
+      }
+      
+      if (gapRounds.length >= limit) break
+    }
+    
+    return gapRounds
   }
 
   private async processQueues(): Promise<void> {
@@ -321,6 +434,9 @@ export class DatabaseIndexingOrchestrator {
                   this.roundIndexer
                     .indexRound(round)
                     .then(async () => {
+                      // Update last activity time
+                      this.lastActivityTime = Date.now()
+                      
                       // The round indexer will handle persisting transaction data
                       // Here we just update the indexing status
                       const stats = this.roundIndexer.getRoundStatus(
