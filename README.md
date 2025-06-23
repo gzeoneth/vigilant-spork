@@ -17,8 +17,11 @@ This dashboard provides comprehensive monitoring of Arbitrum Timeboost auctions,
 - **Recent Rounds**: Detailed view of recent auctions with transaction links
 - **Timeboosted Transactions**: View individual timeboosted transactions per round
 - **Indexing Progress**: Real-time progress tracking when scanning for transactions
+- **Ongoing Round Support**: Continuously indexes rounds in progress with live updates
+- **Block Range Tracking**: Shows exact start and end blocks for each round
 - **Automatic Updates**: Data refreshes every minute
-- **Efficient Caching**: Reduces RPC calls with smart caching
+- **Efficient Caching**: Reduces RPC calls with smart caching and block timestamp optimization
+- **Gap Detection**: Automatically identifies and fills gaps in indexed data
 - **Process Management**: Built-in server management with PID tracking
 
 ## Quick Start
@@ -88,25 +91,39 @@ export LOG_LEVEL=INFO
    - Provides progress tracking during indexing
    - Uses batch processing for efficiency
    - Adaptive rate limiting based on network conditions
+   - Block timestamp caching for optimized searches
 
-4. **Database Layer** (`src/timeboost/db/`)
+4. **Round Indexer** (`src/timeboost/core/RoundIndexer.ts`)
+   - Manages round-specific indexing operations
+   - File-based caching in `./cache/rounds/`
+   - Tracks block ranges for each round
+   - Handles ongoing round indexing
+
+5. **Ongoing Round Indexer** (`src/timeboost/core/OngoingRoundIndexer.ts`)
+   - Monitors rounds that are still in progress
+   - Continuously updates with new blocks
+   - Automatically finalizes rounds when they complete
+
+6. **Database Layer** (`src/timeboost/db/`)
    - SQLite database for persistent storage
    - Repository pattern for clean data access
    - Migration system for schema updates
    - Efficient queries with proper indexing
+   - Stores round metadata including block ranges
 
-5. **Indexing Orchestrator** (`src/timeboost/core/DatabaseIndexingOrchestrator.ts`)
+7. **Indexing Orchestrator** (`src/timeboost/core/DatabaseIndexingOrchestrator.ts`)
    - Manages background indexing of rounds
    - Automatic real-time indexing of new rounds
    - Progressive backfill of historical data
    - Adaptive concurrency control
+   - Gap detection and intelligent backfilling
 
-6. **Server** (`src/timeboost/server.ts`)
+8. **Server** (`src/timeboost/server.ts`)
    - Express.js API server
    - Serves both API endpoints and static frontend
    - Implements caching and rate limiting
 
-7. **Frontend** (`src/ui/`)
+9. **Frontend** (`src/ui/`)
    - Vanilla JavaScript dashboard
    - Real-time data display with auto-refresh
    - Modal views for detailed round information
@@ -141,6 +158,9 @@ export LOG_LEVEL=INFO
 
 ### Round Details
 - Round number
+- Start and end timestamps
+- Start and end block numbers with Arbiscan links
+- Total blocks in the round
 - Auction type (Single-bid or Multi-bid)
 - Express Lane Controller address
 - Winner information
@@ -188,6 +208,24 @@ ts-node src/timeboost/db/cli.ts rounds       # List recent rounds
 ts-node src/timeboost/db/cli.ts bidders      # Show top bidders
 ts-node src/timeboost/db/cli.ts transactions # List recent transactions
 ```
+
+## Data Storage
+
+### File-based Cache
+- **Location**: `./cache/rounds/`
+- **Format**: JSON files named `round-{number}.json`
+- **Contents**: Complete round data with all transactions
+- **Purpose**: Fast retrieval of indexed round data
+
+### SQLite Database
+- **Location**: `./timeboost.db` in project root
+- **Tables**:
+  - `events`: All Timeboost contract events
+  - `rounds`: Round metadata and statistics (including block ranges)
+  - `transactions`: All transactions with timeboost flag
+  - `bidders`: Bidder statistics
+  - `indexing_status`: Track indexing progress
+- **Features**: WAL mode, foreign key constraints, proper indexing
 
 ## Technical Details
 
@@ -261,6 +299,11 @@ Additional bidders can be added in `src/timeboost/core/EventParser.ts`.
 ## License
 
 This project is provided as-is for educational and monitoring purposes.
+
+## Additional Documentation
+
+- **[Server Management](src/timeboost/SERVER_MANAGEMENT.md)**: Detailed documentation on PID management and process control
+- **[Database Module](src/timeboost/db/README.md)**: API documentation and code examples for database usage
 
 ## Contributing
 
