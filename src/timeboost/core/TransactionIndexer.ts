@@ -2,6 +2,7 @@ import { ethers } from 'ethers'
 import { TimeboostedTransaction } from './types'
 import { BatchProvider } from './BatchProvider'
 import { logger } from './Logger'
+import { AdaptiveRateLimiter } from './AdaptiveRateLimiter'
 
 export interface IndexerProgress {
   currentBlock: number
@@ -15,12 +16,28 @@ export interface IndexerProgress {
 export class TransactionIndexer {
   private provider: BatchProvider
   private progressCallback?: (progress: IndexerProgress) => void
+  private adaptiveRateLimiter: AdaptiveRateLimiter
+  private lastBatchSize: number = 5
 
   constructor(rpcUrl: string) {
+    // Initialize adaptive rate limiter with conservative settings
+    this.adaptiveRateLimiter = new AdaptiveRateLimiter({
+      initialConcurrency: 5,
+      minConcurrency: 1,
+      maxConcurrency: 50,
+      increaseRatio: 1.2,
+      decreaseRatio: 0.5,
+      successWindowMs: 30000,
+      adjustmentIntervalMs: 5000,
+      targetSuccessRate: 0.95,
+      enableMetrics: true,
+    })
+
+    // Provider will use dynamic batch sizes based on rate limiter
     this.provider = new BatchProvider(rpcUrl, {
-      batchSize: 20, // Reduced from 100 to 20 requests per batch
-      batchDelay: 100, // Increased delay between batches
-      requestsPerSecond: 5, // Reduced RPS from 10 to 5
+      batchSize: this.adaptiveRateLimiter.getBatchSize(),
+      batchDelay: 100,
+      requestsPerSecond: 10, // Base rate, will be controlled by adaptive limiter
     })
   }
 
@@ -38,30 +55,56 @@ export class TransactionIndexer {
     )
 
     const timeboostedTxs: TimeboostedTransaction[] = []
-    const batchSize = 5 // Process blocks in batches - reduced from 10 to 5
     const totalBlocks = toBlock - fromBlock + 1
     const startTime = Date.now()
     let processedBlocks = 0
+
+    // Dynamically adjust batch size based on rate limiter metrics
+    let batchSize = Math.min(
+      Math.floor(this.adaptiveRateLimiter.getConcurrency() / 2),
+      10
+    )
+    batchSize = Math.max(1, batchSize) // Ensure at least 1
 
     for (let blockNum = fromBlock; blockNum <= toBlock; blockNum += batchSize) {
       const endBlock = Math.min(blockNum + batchSize - 1, toBlock)
       const promises: Promise<void>[] = []
 
       for (let i = blockNum; i <= endBlock; i++) {
-        promises.push(this.processBlock(i, timeboostedTxs))
+        // Use adaptive rate limiter to control request flow
+        promises.push(
+          this.adaptiveRateLimiter.execute(() =>
+            this.processBlock(i, timeboostedTxs)
+          )
+        )
       }
 
       await Promise.all(promises)
       processedBlocks = endBlock - fromBlock + 1
+
+      // Update batch size based on current performance
+      const newBatchSize = Math.min(
+        Math.floor(this.adaptiveRateLimiter.getConcurrency() / 2),
+        10
+      )
+      if (newBatchSize !== batchSize) {
+        logger.debug(
+          'TransactionIndexer',
+          `Adjusting batch size from ${batchSize} to ${newBatchSize} based on rate limiter metrics`
+        )
+        batchSize = Math.max(1, newBatchSize)
+      }
 
       logger.debug(
         'TransactionIndexer',
         `Processed blocks ${blockNum}-${endBlock}, found ${timeboostedTxs.length} timeboosted transactions so far`
       )
 
-      // Add delay between block batches to avoid overwhelming the RPC
+      // Dynamic delay based on rate limiter state
       if (endBlock < toBlock) {
-        await new Promise(resolve => setTimeout(resolve, 200))
+        const metrics = this.adaptiveRateLimiter.getMetrics()
+        const delay = metrics.rateLimitCount > 0 ? 1000 : 100
+        await new Promise(resolve => setTimeout(resolve, delay))
       }
 
       // Report progress
@@ -143,12 +186,25 @@ export class TransactionIndexer {
           })
         }
       }
-    } catch (error) {
-      logger.error(
-        'TransactionIndexer',
-        `Error processing block ${blockNumber}`,
-        error
-      )
+    } catch (error: any) {
+      // Check if it's a rate limit error
+      if (
+        error.code === 429 ||
+        error.message?.includes('429') ||
+        error.message?.toLowerCase().includes('rate limit')
+      ) {
+        logger.warn(
+          'TransactionIndexer',
+          `Rate limited while processing block ${blockNumber}, will be retried`
+        )
+        throw error // Re-throw to let adaptive limiter handle it
+      } else {
+        logger.error(
+          'TransactionIndexer',
+          `Error processing block ${blockNumber}`,
+          error
+        )
+      }
     }
   }
 
@@ -249,5 +305,14 @@ export class TransactionIndexer {
       )
       txs.forEach(callback)
     })
+  }
+
+  getMetrics() {
+    return this.adaptiveRateLimiter.getMetrics()
+  }
+
+  destroy() {
+    this.adaptiveRateLimiter.destroy()
+    this.provider.destroy()
   }
 }

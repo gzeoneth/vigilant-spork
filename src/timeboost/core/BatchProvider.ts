@@ -16,6 +16,7 @@ export class BatchProvider extends ethers.JsonRpcProvider {
   private batchDelay: number
   private requestId = 1
   private rateLimiter: RateLimiter
+  private dynamicBatchSize: boolean = false
 
   constructor(
     url: string,
@@ -23,6 +24,7 @@ export class BatchProvider extends ethers.JsonRpcProvider {
       batchSize?: number
       batchDelay?: number
       requestsPerSecond?: number
+      dynamicBatchSize?: boolean
     } = {}
   ) {
     super(url, undefined, {
@@ -33,6 +35,7 @@ export class BatchProvider extends ethers.JsonRpcProvider {
     this.batchSize = options.batchSize || 100
     this.batchDelay = options.batchDelay || 50
     this.rateLimiter = new RateLimiter(options.requestsPerSecond || 10)
+    this.dynamicBatchSize = options.dynamicBatchSize || false
   }
 
   async send(method: string, params: any[]): Promise<any> {
@@ -93,7 +96,12 @@ export class BatchProvider extends ethers.JsonRpcProvider {
 
     if (this.batchQueue.length === 0) return
 
-    const batch = this.batchQueue.splice(0, this.batchSize)
+    // Use dynamic batch size if enabled
+    const currentBatchSize = this.dynamicBatchSize
+      ? Math.min(this.batchSize, Math.max(5, Math.floor(this.batchSize / 2)))
+      : this.batchSize
+
+    const batch = this.batchQueue.splice(0, currentBatchSize)
     const batchRequest = batch.map(req => ({
       jsonrpc: '2.0',
       method: req.method,
@@ -138,11 +146,21 @@ export class BatchProvider extends ethers.JsonRpcProvider {
     })
 
     if (response.status === 429) {
-      throw { code: 429, message: 'Rate limited' }
+      throw { code: 429, message: 'Rate limited', status: 429 }
     }
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
+      const errorText = await response.text()
+      // Check for rate limit errors in response body
+      if (
+        errorText.toLowerCase().includes('rate limit') ||
+        errorText.toLowerCase().includes('too many requests')
+      ) {
+        throw { code: 429, message: errorText, status: response.status }
+      }
+      throw new Error(
+        `HTTP error! status: ${response.status}, body: ${errorText}`
+      )
     }
 
     return response.json()
@@ -174,6 +192,10 @@ export class BatchProvider extends ethers.JsonRpcProvider {
   ): Promise<(ethers.TransactionReceipt | null)[]> {
     const promises = hashes.map(hash => this.getTransactionReceipt(hash))
     return Promise.all(promises)
+  }
+
+  updateBatchSize(newBatchSize: number): void {
+    this.batchSize = Math.max(1, Math.min(1000, newBatchSize))
   }
 
   destroy(): void {

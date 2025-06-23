@@ -1,6 +1,7 @@
 import { RoundIndexer } from './RoundIndexer'
 import { EventParser } from '../core/EventParser'
 import { logger } from './Logger'
+import { AdaptiveRateLimiter } from './AdaptiveRateLimiter'
 
 export class IndexingOrchestrator {
   private roundIndexer: RoundIndexer
@@ -12,10 +13,24 @@ export class IndexingOrchestrator {
   private oldestIndexedRound: bigint | null = null
   private indexingQueue: Set<bigint> = new Set()
   private backfillQueue: Set<bigint> = new Set()
+  private adaptiveRateLimiter: AdaptiveRateLimiter
 
   constructor(roundIndexer: RoundIndexer, eventParser: EventParser) {
     this.roundIndexer = roundIndexer
     this.eventParser = eventParser
+
+    // Initialize adaptive rate limiter for orchestrating parallel indexing
+    this.adaptiveRateLimiter = new AdaptiveRateLimiter({
+      initialConcurrency: 3,
+      minConcurrency: 1,
+      maxConcurrency: 10,
+      increaseRatio: 1.2,
+      decreaseRatio: 0.5,
+      successWindowMs: 60000,
+      adjustmentIntervalMs: 10000,
+      targetSuccessRate: 0.9,
+      enableMetrics: true,
+    })
   }
 
   async start(): Promise<void> {
@@ -62,6 +77,7 @@ export class IndexingOrchestrator {
       clearInterval(this.backfillInterval)
       this.backfillInterval = null
     }
+    this.adaptiveRateLimiter.destroy()
     logger.info('IndexingOrchestrator', 'Stopped automatic indexing')
   }
 
@@ -154,16 +170,23 @@ export class IndexingOrchestrator {
       .getAllRoundStatuses()
       .filter(s => s.status === 'indexing' || s.status === 'pending').length
 
-    if (activeIndexing > 2) {
+    // Use adaptive rate limiter to determine how many rounds to backfill
+    const maxConcurrent = Math.floor(this.adaptiveRateLimiter.getConcurrency())
+    const availableSlots = Math.max(0, maxConcurrent - activeIndexing)
+
+    if (availableSlots === 0) {
       logger.debug(
         'IndexingOrchestrator',
-        `Skipping backfill, ${activeIndexing} rounds currently indexing`
+        `Skipping backfill, ${activeIndexing}/${maxConcurrent} rounds currently indexing`
       )
       return
     }
 
     // Move some rounds from backfill queue to indexing queue
-    const roundsToBackfill = Array.from(this.backfillQueue).slice(0, 3)
+    const roundsToBackfill = Array.from(this.backfillQueue).slice(
+      0,
+      availableSlots
+    )
     roundsToBackfill.forEach(round => {
       this.backfillQueue.delete(round)
       this.indexingQueue.add(round)
@@ -185,7 +208,21 @@ export class IndexingOrchestrator {
       try {
         // Process high-priority indexing queue first
         if (this.indexingQueue.size > 0) {
-          const roundsToIndex = Array.from(this.indexingQueue).slice(0, 3)
+          // Determine how many rounds to process based on adaptive concurrency
+          const maxConcurrent = Math.floor(
+            this.adaptiveRateLimiter.getConcurrency()
+          )
+          const activeIndexing = this.roundIndexer
+            .getAllRoundStatuses()
+            .filter(
+              s => s.status === 'indexing' || s.status === 'pending'
+            ).length
+          const availableSlots = Math.max(0, maxConcurrent - activeIndexing)
+
+          const roundsToIndex = Array.from(this.indexingQueue).slice(
+            0,
+            availableSlots
+          )
 
           for (const roundNumber of roundsToIndex) {
             const round = this.eventParser.getRoundInfo(roundNumber)
@@ -201,15 +238,19 @@ export class IndexingOrchestrator {
                 if (!status) {
                   logger.info(
                     'IndexingOrchestrator',
-                    `Starting to index round ${roundNumber}`
+                    `Starting to index round ${roundNumber} (${activeIndexing}/${maxConcurrent} active)`
                   )
-                  this.roundIndexer.indexRound(round).catch(error => {
-                    logger.error(
-                      'IndexingOrchestrator',
-                      `Error indexing round ${roundNumber}`,
-                      error
-                    )
-                  })
+
+                  // Use adaptive rate limiter to control indexing
+                  this.adaptiveRateLimiter
+                    .execute(() => this.roundIndexer.indexRound(round))
+                    .catch(error => {
+                      logger.error(
+                        'IndexingOrchestrator',
+                        `Error indexing round ${roundNumber}`,
+                        error
+                      )
+                    })
                 }
               }
               this.indexingQueue.delete(roundNumber)
@@ -233,10 +274,20 @@ export class IndexingOrchestrator {
     indexingQueueSize: number
     backfillQueueSize: number
     activeIndexing: number
+    rateLimiterMetrics: {
+      currentConcurrency: number
+      targetConcurrency: number
+      successRate: number
+    }
   } {
     const activeIndexing = this.roundIndexer
       .getAllRoundStatuses()
       .filter(s => s.status === 'indexing' || s.status === 'pending').length
+
+    const metrics = this.adaptiveRateLimiter.getMetrics()
+    const totalRequests = metrics.successCount + metrics.failureCount
+    const successRate =
+      totalRequests > 0 ? metrics.successCount / totalRequests : 0
 
     return {
       isRunning: this.isRunning,
@@ -245,6 +296,11 @@ export class IndexingOrchestrator {
       indexingQueueSize: this.indexingQueue.size,
       backfillQueueSize: this.backfillQueue.size,
       activeIndexing,
+      rateLimiterMetrics: {
+        currentConcurrency: metrics.currentConcurrency,
+        targetConcurrency: metrics.targetConcurrency,
+        successRate,
+      },
     }
   }
 }

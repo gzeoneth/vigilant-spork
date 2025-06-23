@@ -220,20 +220,54 @@ export class RoundIndexer {
           'RoundIndexer',
           `Successfully indexed round ${roundKey} with ${transactions.length} transactions`
         )
-      } catch (error) {
-        logger.error('RoundIndexer', `Error indexing round ${roundKey}`, error)
-        this.roundStatus.set(roundKey, {
-          round: roundKey,
-          status: 'error',
-          transactionCount: 0,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        })
+      } catch (error: any) {
+        // Check if it's a rate limit error
+        const isRateLimit =
+          error.code === 429 ||
+          error.status === 429 ||
+          error.message?.includes('429') ||
+          error.message?.toLowerCase().includes('rate limit')
+
+        if (isRateLimit) {
+          logger.warn(
+            'RoundIndexer',
+            `Rate limited while indexing round ${roundKey}, will retry`
+          )
+          // Put it back at the front of the queue to retry
+          this.indexingQueue.unshift({ roundKey, roundInfo })
+          this.roundStatus.set(roundKey, {
+            round: roundKey,
+            status: 'pending',
+            transactionCount: 0,
+          })
+          // Increase delay before next attempt
+          await new Promise(resolve => setTimeout(resolve, 5000))
+        } else {
+          logger.error(
+            'RoundIndexer',
+            `Error indexing round ${roundKey}`,
+            error
+          )
+          this.roundStatus.set(roundKey, {
+            round: roundKey,
+            status: 'error',
+            transactionCount: 0,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          })
+        }
       }
 
       this.currentlyIndexing = null
 
-      // Add delay between rounds to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      // Dynamic delay based on rate limiter metrics
+      const metrics = this.indexer.getMetrics()
+      let delay = 1000
+      if (metrics.rateLimitCount > 0) {
+        delay = 5000 // Longer delay if we hit rate limits
+      } else if (metrics.currentConcurrency > 20) {
+        delay = 500 // Shorter delay if we have high concurrency
+      }
+      await new Promise(resolve => setTimeout(resolve, delay))
     }
 
     this.isProcessing = false
@@ -258,5 +292,13 @@ export class RoundIndexer {
     } catch (error) {
       logger.error('RoundIndexer', 'Error clearing cache', error)
     }
+  }
+
+  getIndexerMetrics() {
+    return this.indexer.getMetrics()
+  }
+
+  destroy() {
+    this.indexer.destroy()
   }
 }

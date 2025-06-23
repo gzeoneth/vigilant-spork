@@ -164,10 +164,10 @@ describe('Timeboost Dashboard Tests', () => {
 
   it('should return orchestrator status', async function () {
     this.timeout(60000)
-    
+
     // Wait for cache update and orchestrator to start
     await new Promise(resolve => setTimeout(resolve, 20000))
-    
+
     const response = await fetchWrapper(`${apiUrl}/indexer/orchestrator`)
     expect(response.status).to.equal(200)
 
@@ -178,11 +178,42 @@ describe('Timeboost Dashboard Tests', () => {
     expect(data).to.have.property('indexingQueueSize')
     expect(data).to.have.property('backfillQueueSize')
     expect(data).to.have.property('activeIndexing')
-    
+    expect(data).to.have.property('rateLimiterMetrics')
+
+    // Check rate limiter metrics
+    expect(data.rateLimiterMetrics).to.have.property('currentConcurrency')
+    expect(data.rateLimiterMetrics).to.have.property('targetConcurrency')
+    expect(data.rateLimiterMetrics).to.have.property('successRate')
+
     // Should be running
     expect(data.isRunning).to.equal(true)
-    
+
     // Should have some rounds in queue
     expect(data.indexingQueueSize + data.backfillQueueSize).to.be.greaterThan(0)
+  })
+
+  it('should return indexer metrics', async () => {
+    const response = await fetch('http://localhost:3001/api/indexer/metrics')
+    expect(response.status).to.equal(200)
+
+    const data = await response.json()
+    expect(data).to.have.property('orchestrator')
+    expect(data).to.have.property('rateLimiter')
+
+    // Check rate limiter metrics structure
+    const rateLimiter = data.rateLimiter
+    expect(rateLimiter).to.have.property('currentConcurrency')
+    expect(rateLimiter).to.have.property('targetConcurrency')
+    expect(rateLimiter).to.have.property('successCount')
+    expect(rateLimiter).to.have.property('failureCount')
+    expect(rateLimiter).to.have.property('rateLimitCount')
+    expect(rateLimiter).to.have.property('averageResponseTime')
+    expect(rateLimiter).to.have.property('lastAdjustmentTime')
+
+    // Basic validation
+    expect(rateLimiter.currentConcurrency).to.be.at.least(1)
+    expect(rateLimiter.currentConcurrency).to.be.at.most(50)
+    expect(rateLimiter.targetConcurrency).to.be.at.least(1)
+    expect(rateLimiter.targetConcurrency).to.be.at.most(50)
   })
 })

@@ -469,6 +469,24 @@ app.get('/api/indexer/orchestrator', (req, res) => {
   res.json(status)
 })
 
+app.get('/api/indexer/metrics', (req, res) => {
+  const orchestratorStatus = indexingOrchestrator.getStatus()
+  const indexerMetrics = roundIndexer.getIndexerMetrics()
+
+  res.json({
+    orchestrator: orchestratorStatus,
+    rateLimiter: {
+      currentConcurrency: indexerMetrics.currentConcurrency,
+      targetConcurrency: indexerMetrics.targetConcurrency,
+      successCount: indexerMetrics.successCount,
+      failureCount: indexerMetrics.failureCount,
+      rateLimitCount: indexerMetrics.rateLimitCount,
+      averageResponseTime: indexerMetrics.averageResponseTime,
+      lastAdjustmentTime: indexerMetrics.lastAdjustmentTime,
+    },
+  })
+})
+
 // Start server
 app.listen(PORT, async () => {
   console.log(`Timeboost server running on port ${PORT}`)
