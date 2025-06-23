@@ -57,6 +57,8 @@ function formatRoundData(round: any, transactionCount: number = 0): any {
     pricePaidUSD: pricePaidFormatted.usd,
     auctionTransactionHash: round.auctionTransactionHash,
     transactionCount,
+    startBlock: round.startBlock,
+    endBlock: round.endBlock,
   }
 }
 
@@ -274,9 +276,14 @@ app.get('/api/rounds/:round', async (req, res) => {
     const cachedRound = await roundIndexer.getCachedRound(roundKey)
 
     if (cachedRound) {
-      // Return cached data
+      // Return cached data with block information
+      const roundWithBlocks = {
+        ...round,
+        startBlock: cachedRound.startBlock,
+        endBlock: cachedRound.endBlock,
+      }
       return res.json({
-        ...formatRoundData(round, cachedRound.transactions.length),
+        ...formatRoundData(roundWithBlocks, cachedRound.transactions.length),
         transactions: cachedRound.transactions.map(tx => ({
           hash: tx.hash,
           blockNumber: tx.blockNumber,
@@ -325,9 +332,17 @@ app.get('/api/rounds', async (req, res) => {
         const status = roundIndexer.getRoundStatus(roundKey)
         const cached = await roundIndexer.getCachedRound(roundKey)
 
+        const roundWithBlocks = cached
+          ? {
+              ...round,
+              startBlock: cached.startBlock,
+              endBlock: cached.endBlock,
+            }
+          : round
+
         return {
           ...formatRoundData(
-            round,
+            roundWithBlocks,
             cached?.transactions.length || status?.transactionCount || 0
           ),
           indexStatus: status?.status || (cached ? 'completed' : 'not_started'),

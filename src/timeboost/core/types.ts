@@ -136,6 +136,8 @@ export interface RoundInfo {
   pricePaid: bigint | null
   auctionTransactionHash: string | null
   transactions: TimeboostedTransaction[]
+  startBlock?: number
+  endBlock?: number
 }
 
 export interface BidderInfo {

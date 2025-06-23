@@ -58,6 +58,28 @@ export class DatabaseIndexingOrchestrator {
       'Starting automatic indexing with database persistence'
     )
 
+    // Set up callback to update block information in database
+    this.roundIndexer.setDatabaseCallback(async (roundKey, blockInfo) => {
+      try {
+        const roundNumber = Number(roundKey)
+        await this.repository.rounds.updateBlockRange(
+          roundNumber,
+          blockInfo.startBlock,
+          blockInfo.endBlock
+        )
+        logger.info(
+          'DatabaseIndexingOrchestrator',
+          `Updated round ${roundNumber} with blocks ${blockInfo.startBlock} to ${blockInfo.endBlock}`
+        )
+      } catch (error) {
+        logger.error(
+          'DatabaseIndexingOrchestrator',
+          'Error updating block range',
+          error
+        )
+      }
+    })
+
     // Initialize from database state
     await this.initializeFromDatabase()
 

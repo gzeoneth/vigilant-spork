@@ -23,6 +23,8 @@ export interface RoundRecord {
   total_timeboosted: number
   indexed: boolean
   last_indexed_block?: number
+  start_block?: number
+  end_block?: number
   created_at?: string
   updated_at?: string
 }

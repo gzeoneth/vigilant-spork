@@ -94,6 +94,20 @@ export class RoundRepository {
     stmt.run(lastBlock, roundNumber)
   }
 
+  async updateBlockRange(
+    roundNumber: number,
+    startBlock: number,
+    endBlock: number
+  ): Promise<void> {
+    const stmt = this.db['db'].prepare(`
+      UPDATE rounds 
+      SET start_block = ?, end_block = ? 
+      WHERE round_number = ?
+    `)
+
+    stmt.run(startBlock, endBlock, roundNumber)
+  }
+
   async findPartiallyIndexed(limit: number = 10): Promise<RoundRecord[]> {
     const stmt = this.db['db'].prepare(`
       SELECT r.* FROM rounds r

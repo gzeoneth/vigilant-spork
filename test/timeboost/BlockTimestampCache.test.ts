@@ -59,7 +59,10 @@ describe('BlockTimestampCache', () => {
       cache.set(400, 4000)
 
       const closest = cache.getClosestBlocks(2500)
-      expect(closest.before).to.deep.equal({ blockNumber: 200, timestamp: 2000 })
+      expect(closest.before).to.deep.equal({
+        blockNumber: 200,
+        timestamp: 2000,
+      })
       expect(closest.after).to.deep.equal({ blockNumber: 300, timestamp: 3000 })
     })
 
@@ -74,7 +77,10 @@ describe('BlockTimestampCache', () => {
 
       // After all blocks
       closest = cache.getClosestBlocks(2500)
-      expect(closest.before).to.deep.equal({ blockNumber: 200, timestamp: 2000 })
+      expect(closest.before).to.deep.equal({
+        blockNumber: 200,
+        timestamp: 2000,
+      })
       expect(closest.after).to.be.undefined
     })
   })

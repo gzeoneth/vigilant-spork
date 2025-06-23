@@ -3,6 +3,7 @@ import { RoundInfo, TimeboostedTransaction } from './types'
 import fs from 'fs/promises'
 import path from 'path'
 import { logger } from './Logger'
+import { OngoingRoundIndexer } from './OngoingRoundIndexer'
 
 // Configuration constants
 const ROUND_INDEXER_CONFIG = {
@@ -27,6 +28,8 @@ export interface IndexedRound {
   endTimestamp: number
   transactions: TimeboostedTransaction[]
   indexedAt: number
+  startBlock?: number
+  endBlock?: number
 }
 
 export class RoundIndexer {
@@ -36,11 +39,29 @@ export class RoundIndexer {
   private currentlyIndexing: string | null = null
   private roundStatus: Map<string, RoundIndexStatus> = new Map()
   private isProcessing = false
+  private ongoingRoundIndexer: OngoingRoundIndexer | null = null
+  private databaseCallback?: (
+    roundKey: string,
+    blockInfo: { startBlock: number; endBlock: number }
+  ) => Promise<void>
 
   constructor(rpcUrl: string, cacheDir: string = './cache/rounds') {
     this.indexer = new TransactionIndexer(rpcUrl)
     this.cacheDir = cacheDir
     this.initializeCacheDir()
+
+    // Initialize ongoing round monitoring
+    this.ongoingRoundIndexer = new OngoingRoundIndexer(this, rpcUrl)
+    this.ongoingRoundIndexer.startMonitoring()
+  }
+
+  setDatabaseCallback(
+    callback: (
+      roundKey: string,
+      blockInfo: { startBlock: number; endBlock: number }
+    ) => Promise<void>
+  ) {
+    this.databaseCallback = callback
   }
 
   private async initializeCacheDir() {
@@ -199,23 +220,65 @@ export class RoundIndexer {
           })
         })
 
-        // Index transactions
-        const transactions =
-          await this.indexer.getTimeboostedTransactionsForRound(
-            startTimestamp,
-            endTimestamp
-          )
+        // Check if round is ongoing
+        const currentTime = Math.floor(Date.now() / 1000)
+        const isOngoing = currentTime < endTimestamp
 
-        // Cache the result
+        // Get block range for the round
+        const startBlock = await this.indexer['findBlockByTimestamp'](
+          startTimestamp,
+          'after'
+        )
+        let endBlock: number | null = null
+
+        if (isOngoing) {
+          // For ongoing rounds, get the latest block
+          const latestBlock = await this.indexer['provider'].getBlock('latest')
+          endBlock = latestBlock ? latestBlock.number : null
+
+          // Track this round for continuous updates
+          if (this.ongoingRoundIndexer && startBlock) {
+            await this.ongoingRoundIndexer.trackOngoingRound(
+              roundKey,
+              roundInfo,
+              startBlock
+            )
+          }
+        } else {
+          // For completed rounds, find the exact end block
+          endBlock = await this.indexer['findBlockByTimestamp'](
+            endTimestamp,
+            'before'
+          )
+        }
+
+        if (!startBlock || !endBlock) {
+          throw new Error('Could not determine block range for round')
+        }
+
+        // Index transactions
+        const transactions = await this.indexer.getTimeboostedTransactions(
+          startBlock,
+          endBlock
+        )
+
+        // Cache the result with block information
         const indexedRound: IndexedRound = {
           round: roundKey,
           startTimestamp,
           endTimestamp,
           transactions,
           indexedAt: Date.now(),
+          startBlock,
+          endBlock,
         }
 
         await this.cacheRound(roundKey, indexedRound)
+
+        // Update database with block information if callback provided
+        if (this.databaseCallback) {
+          await this.databaseCallback(roundKey, { startBlock, endBlock })
+        }
 
         // Update status to completed
         this.roundStatus.set(roundKey, {
@@ -313,6 +376,9 @@ export class RoundIndexer {
   }
 
   destroy() {
+    if (this.ongoingRoundIndexer) {
+      this.ongoingRoundIndexer.destroy()
+    }
     this.indexer.destroy()
   }
 }
