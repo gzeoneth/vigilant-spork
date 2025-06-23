@@ -1,8 +1,7 @@
 import { expect } from 'chai'
 import { spawn, ChildProcess } from 'child_process'
 
-// Since we're running in Claude Code, we'll use a simpler approach
-// that doesn't require MCP functions directly
+// Puppeteer test configuration for dashboard testing
 
 describe('Timeboost Dashboard Puppeteer Tests', () => {
   let serverProcess: ChildProcess
