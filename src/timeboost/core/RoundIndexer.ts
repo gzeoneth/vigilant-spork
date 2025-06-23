@@ -4,6 +4,15 @@ import fs from 'fs/promises'
 import path from 'path'
 import { logger } from './Logger'
 
+// Configuration constants
+const ROUND_INDEXER_CONFIG = {
+  STATUS_CHECK_INTERVAL_MS: 500,
+  DEFAULT_DELAY_MS: 1000,
+  HIGH_CONCURRENCY_THRESHOLD: 20,
+  HIGH_CONCURRENCY_DELAY_MS: 500,
+  RATE_LIMIT_DELAY_MS: 5000,
+}
+
 export interface RoundIndexStatus {
   round: string
   status: 'pending' | 'indexing' | 'completed' | 'error'
@@ -150,7 +159,7 @@ export class RoundIndexer {
             reject(new Error(status.error || 'Indexing failed'))
           }
         }
-      }, 500)
+      }, ROUND_INDEXER_CONFIG.STATUS_CHECK_INTERVAL_MS)
     })
   }
 
@@ -241,7 +250,9 @@ export class RoundIndexer {
             transactionCount: 0,
           })
           // Increase delay before next attempt
-          await new Promise(resolve => setTimeout(resolve, 5000))
+          await new Promise(resolve =>
+            setTimeout(resolve, ROUND_INDEXER_CONFIG.RATE_LIMIT_DELAY_MS)
+          )
         } else {
           logger.error(
             'RoundIndexer',
@@ -261,11 +272,14 @@ export class RoundIndexer {
 
       // Dynamic delay based on rate limiter metrics
       const metrics = this.indexer.getMetrics()
-      let delay = 1000
+      let delay = ROUND_INDEXER_CONFIG.DEFAULT_DELAY_MS
       if (metrics.rateLimitCount > 0) {
-        delay = 5000 // Longer delay if we hit rate limits
-      } else if (metrics.currentConcurrency > 20) {
-        delay = 500 // Shorter delay if we have high concurrency
+        delay = ROUND_INDEXER_CONFIG.RATE_LIMIT_DELAY_MS // Longer delay if we hit rate limits
+      } else if (
+        metrics.currentConcurrency >
+        ROUND_INDEXER_CONFIG.HIGH_CONCURRENCY_THRESHOLD
+      ) {
+        delay = ROUND_INDEXER_CONFIG.HIGH_CONCURRENCY_DELAY_MS // Shorter delay if we have high concurrency
       }
       await new Promise(resolve => setTimeout(resolve, delay))
     }

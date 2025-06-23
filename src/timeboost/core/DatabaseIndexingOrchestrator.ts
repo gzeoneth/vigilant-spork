@@ -3,6 +3,19 @@ import { EventParser } from '../core/EventParser'
 import { logger } from './Logger'
 import { TimeboostRepository } from '../db/repositories'
 
+// Configuration constants
+const ORCHESTRATOR_CONFIG = {
+  CHECK_NEW_ROUNDS_INTERVAL_MS: 30000, // 30 seconds
+  BACKFILL_INTERVAL_MS: 60000, // 60 seconds
+  QUEUE_PROCESS_DELAY_MS: 5000, // 5 seconds
+  ERROR_RETRY_DELAY_MS: 10000, // 10 seconds
+  MAX_CONCURRENT_INDEXING: 2,
+  BATCH_SIZE_PER_ITERATION: 3,
+  INITIAL_HIGH_PRIORITY_ROUNDS: 5,
+  MAX_UNINDEXED_ROUNDS_FETCH: 100,
+  MAX_FAILED_INDEXING_FETCH: 10,
+}
+
 export class DatabaseIndexingOrchestrator {
   private roundIndexer: RoundIndexer
   private eventParser: EventParser
@@ -40,7 +53,7 @@ export class DatabaseIndexingOrchestrator {
     // Initialize from database state
     await this.initializeFromDatabase()
 
-    // Start real-time indexing (check every 30 seconds for new rounds)
+    // Start real-time indexing
     this.indexingInterval = setInterval(() => {
       this.checkForNewRounds().catch(error => {
         logger.error(
@@ -49,9 +62,9 @@ export class DatabaseIndexingOrchestrator {
           error
         )
       })
-    }, 30000)
+    }, ORCHESTRATOR_CONFIG.CHECK_NEW_ROUNDS_INTERVAL_MS)
 
-    // Start backfill process (check every 60 seconds)
+    // Start backfill process
     this.backfillInterval = setInterval(() => {
       this.backfillOlderRounds().catch(error => {
         logger.error(
@@ -60,7 +73,7 @@ export class DatabaseIndexingOrchestrator {
           error
         )
       })
-    }, 60000)
+    }, ORCHESTRATOR_CONFIG.BACKFILL_INTERVAL_MS)
 
     // Process queues
     this.processQueues()
@@ -97,13 +110,17 @@ export class DatabaseIndexingOrchestrator {
       })
 
       // Get unindexed rounds from database
-      const unindexedRounds = await this.repository.rounds.findUnindexed(100)
+      const unindexedRounds = await this.repository.rounds.findUnindexed(
+        ORCHESTRATOR_CONFIG.MAX_UNINDEXED_ROUNDS_FETCH
+      )
       const unindexedRoundNumbers = new Set(
         unindexedRounds.map(r => BigInt(r.round_number))
       )
 
       // Check for failed indexing attempts
-      const failedIndexing = await this.repository.indexingStatus.findFailed(10)
+      const failedIndexing = await this.repository.indexingStatus.findFailed(
+        ORCHESTRATOR_CONFIG.MAX_FAILED_INDEXING_FETCH
+      )
       const failedRoundNumbers = new Set(
         failedIndexing.map(s => BigInt(s.round_number))
       )
@@ -132,7 +149,7 @@ export class DatabaseIndexingOrchestrator {
           unindexedRoundNumbers.has(round.round) ||
           !(await this.isRoundInDatabase(round.round))
         ) {
-          if (addedToQueue < 5) {
+          if (addedToQueue < ORCHESTRATOR_CONFIG.INITIAL_HIGH_PRIORITY_ROUNDS) {
             this.indexingQueue.add(round.round)
             addedToQueue++
           } else {
@@ -223,7 +240,7 @@ export class DatabaseIndexingOrchestrator {
       .getAllRoundStatuses()
       .filter(s => s.status === 'indexing' || s.status === 'pending').length
 
-    if (activeIndexing > 2) {
+    if (activeIndexing > ORCHESTRATOR_CONFIG.MAX_CONCURRENT_INDEXING) {
       logger.debug(
         'DatabaseIndexingOrchestrator',
         `Skipping backfill, ${activeIndexing} rounds currently indexing`
@@ -232,7 +249,10 @@ export class DatabaseIndexingOrchestrator {
     }
 
     // Move some rounds from backfill queue to indexing queue
-    const roundsToBackfill = Array.from(this.backfillQueue).slice(0, 3)
+    const roundsToBackfill = Array.from(this.backfillQueue).slice(
+      0,
+      ORCHESTRATOR_CONFIG.BATCH_SIZE_PER_ITERATION
+    )
     roundsToBackfill.forEach(round => {
       this.backfillQueue.delete(round)
       this.indexingQueue.add(round)
@@ -254,7 +274,10 @@ export class DatabaseIndexingOrchestrator {
       try {
         // Process high-priority indexing queue first
         if (this.indexingQueue.size > 0) {
-          const roundsToIndex = Array.from(this.indexingQueue).slice(0, 3)
+          const roundsToIndex = Array.from(this.indexingQueue).slice(
+            0,
+            ORCHESTRATOR_CONFIG.BATCH_SIZE_PER_ITERATION
+          )
 
           for (const roundNumber of roundsToIndex) {
             const round = this.eventParser.getRoundInfo(roundNumber)
@@ -297,7 +320,7 @@ export class DatabaseIndexingOrchestrator {
                   // Start indexing with database callback
                   this.roundIndexer
                     .indexRound(round)
-                    .then(async _result => {
+                    .then(async () => {
                       // The round indexer will handle persisting transaction data
                       // Here we just update the indexing status
                       const stats = this.roundIndexer.getRoundStatus(
@@ -330,14 +353,18 @@ export class DatabaseIndexingOrchestrator {
         }
 
         // Wait before next iteration
-        await new Promise(resolve => setTimeout(resolve, 5000))
+        await new Promise(resolve =>
+          setTimeout(resolve, ORCHESTRATOR_CONFIG.QUEUE_PROCESS_DELAY_MS)
+        )
       } catch (error) {
         logger.error(
           'DatabaseIndexingOrchestrator',
           'Error processing queues',
           error
         )
-        await new Promise(resolve => setTimeout(resolve, 10000))
+        await new Promise(resolve =>
+          setTimeout(resolve, ORCHESTRATOR_CONFIG.ERROR_RETRY_DELAY_MS)
+        )
       }
     }
   }

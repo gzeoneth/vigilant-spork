@@ -66,7 +66,7 @@ async function demo() {
     for (let i = 0; i < 10; i++) {
       const promise = limiter
         .execute(() => simulateRpcCall())
-        .catch((error: any) => {
+        .catch((_error: any) => {
           // Errors are expected (rate limits)
         })
       requestPromises.push(promise)

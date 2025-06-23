@@ -4,7 +4,6 @@ import path from 'path'
 import { ethers } from 'ethers'
 import { EventMonitor } from './core/EventMonitor'
 import { EventParser } from './core/EventParser'
-// import { TransactionIndexer, IndexerProgress } from './core/TransactionIndexer'
 import { RoundIndexer } from './core/RoundIndexer'
 import { IndexingOrchestrator } from './core/IndexingOrchestrator'
 import { logger } from './core/Logger'
@@ -25,9 +24,57 @@ app.use(express.static(path.join(__dirname, '../ui')))
 // Initialize components
 const eventMonitor = new EventMonitor(RPC_URL)
 const eventParser = new EventParser()
-// const transactionIndexer = new TransactionIndexer(RPC_URL)
 const roundIndexer = new RoundIndexer(RPC_URL)
 const indexingOrchestrator = new IndexingOrchestrator(roundIndexer, eventParser)
+
+// Helper function to format value with ETH and USD
+function formatValueWithUSD(value: bigint | null): {
+  eth: string | null
+  usd: string | null
+} {
+  if (!value) return { eth: null, usd: null }
+  return {
+    eth: eventParser.formatEther(value),
+    usd: eventParser.formatUSD(value, ETH_PRICE),
+  }
+}
+
+// Helper function to format round data consistently
+function formatRoundData(round: any, transactionCount: number = 0): any {
+  const pricePaidFormatted = formatValueWithUSD(round.pricePaid)
+  const winnerBidAmountFormatted = formatValueWithUSD(round.winnerBidAmount)
+
+  return {
+    round: round.round.toString(),
+    startTimestamp: Number(round.startTimestamp),
+    endTimestamp: Number(round.endTimestamp),
+    expressLaneController: round.expressLaneController,
+    auctionType: round.auctionType,
+    winnerBidder: round.winnerBidder,
+    winnerBidAmount: winnerBidAmountFormatted.eth,
+    winnerBidAmountUSD: winnerBidAmountFormatted.usd,
+    pricePaid: pricePaidFormatted.eth,
+    pricePaidUSD: pricePaidFormatted.usd,
+    auctionTransactionHash: round.auctionTransactionHash,
+    transactionCount,
+  }
+}
+
+// Helper function to format bidder data consistently
+function formatBidderData(bidder: any): any {
+  const totalSpentFormatted = formatValueWithUSD(bidder.totalSpent)
+  const currentBalanceFormatted = formatValueWithUSD(bidder.currentBalance)
+
+  return {
+    address: bidder.address,
+    label: bidder.label,
+    roundsWon: bidder.roundsWon,
+    totalSpent: totalSpentFormatted.eth,
+    totalSpentUSD: totalSpentFormatted.usd,
+    currentBalance: currentBalanceFormatted.eth,
+    currentBalanceUSD: currentBalanceFormatted.usd,
+  }
+}
 
 // Cache for data
 let cachedData = {
@@ -38,16 +85,12 @@ let cachedData = {
   startBlock: 0,
 }
 
-// Indexer progress tracking
-// const indexerProgress: IndexerProgress | null = null
-// const currentRoundIndexStatus: RoundIndexStatus | null = null
-
 const CACHE_DURATION = 30000 // 30 seconds
 
 // Function to update cache
 async function updateCache() {
   try {
-    console.log('Updating cache...')
+    logger.info('Server', 'Updating cache...')
 
     // Get recent blocks to scan
     const provider = new ethers.JsonRpcProvider(RPC_URL)
@@ -93,49 +136,23 @@ async function updateCache() {
     const bidders = eventParser.getBidderStats()
 
     // Update cache
+    const totalRevenueFormatted = formatValueWithUSD(metrics.totalRevenue)
+    const avgPriceFormatted = formatValueWithUSD(metrics.averagePricePerRound)
+
     cachedData = {
       metrics: {
         totalRounds: metrics.totalRounds,
-        totalRevenue: eventParser.formatEther(metrics.totalRevenue),
-        totalRevenueUSD: eventParser.formatUSD(metrics.totalRevenue, ETH_PRICE),
-        averagePricePerRound: eventParser.formatEther(
-          metrics.averagePricePerRound
-        ),
-        averagePricePerRoundUSD: eventParser.formatUSD(
-          metrics.averagePricePerRound,
-          ETH_PRICE
-        ),
+        totalRevenue: totalRevenueFormatted.eth,
+        totalRevenueUSD: totalRevenueFormatted.usd,
+        averagePricePerRound: avgPriceFormatted.eth,
+        averagePricePerRoundUSD: avgPriceFormatted.usd,
         lastProcessedBlock: latestBlock,
         startBlock: fromBlock,
       },
-      bidders: bidders.map(bidder => ({
-        address: bidder.address,
-        label: bidder.label,
-        roundsWon: bidder.roundsWon,
-        totalSpent: eventParser.formatEther(bidder.totalSpent),
-        totalSpentUSD: eventParser.formatUSD(bidder.totalSpent, ETH_PRICE),
-        currentBalance: eventParser.formatEther(bidder.currentBalance),
-        currentBalanceUSD: eventParser.formatUSD(
-          bidder.currentBalance,
-          ETH_PRICE
-        ),
-      })),
-      recentRounds: metrics.recentRounds.map(round => ({
-        round: round.round.toString(),
-        startTimestamp: Number(round.startTimestamp),
-        endTimestamp: Number(round.endTimestamp),
-        expressLaneController: round.expressLaneController,
-        auctionType: round.auctionType,
-        winnerBidder: round.winnerBidder,
-        pricePaid: round.pricePaid
-          ? eventParser.formatEther(round.pricePaid)
-          : null,
-        pricePaidUSD: round.pricePaid
-          ? eventParser.formatUSD(round.pricePaid, ETH_PRICE)
-          : null,
-        auctionTransactionHash: round.auctionTransactionHash,
-        transactionCount: round.transactions.length,
-      })),
+      bidders: bidders.map(formatBidderData),
+      recentRounds: metrics.recentRounds.map(round =>
+        formatRoundData(round, round.transactions.length)
+      ),
       lastUpdate: Date.now(),
       startBlock: fromBlock,
     }
@@ -259,23 +276,7 @@ app.get('/api/rounds/:round', async (req, res) => {
     if (cachedRound) {
       // Return cached data
       return res.json({
-        round: round.round.toString(),
-        startTimestamp: Number(round.startTimestamp),
-        endTimestamp: Number(round.endTimestamp),
-        expressLaneController: round.expressLaneController,
-        auctionType: round.auctionType,
-        winnerBidder: round.winnerBidder,
-        winnerBidAmount: round.winnerBidAmount
-          ? eventParser.formatEther(round.winnerBidAmount)
-          : null,
-        pricePaid: round.pricePaid
-          ? eventParser.formatEther(round.pricePaid)
-          : null,
-        pricePaidUSD: round.pricePaid
-          ? eventParser.formatUSD(round.pricePaid, ETH_PRICE)
-          : null,
-        auctionTransactionHash: round.auctionTransactionHash,
-        transactionCount: cachedRound.transactions.length,
+        ...formatRoundData(round, cachedRound.transactions.length),
         transactions: cachedRound.transactions.map(tx => ({
           hash: tx.hash,
           blockNumber: tx.blockNumber,
@@ -296,23 +297,7 @@ app.get('/api/rounds/:round', async (req, res) => {
 
     // Return round info with current indexing status
     return res.json({
-      round: round.round.toString(),
-      startTimestamp: Number(round.startTimestamp),
-      endTimestamp: Number(round.endTimestamp),
-      expressLaneController: round.expressLaneController,
-      auctionType: round.auctionType,
-      winnerBidder: round.winnerBidder,
-      winnerBidAmount: round.winnerBidAmount
-        ? eventParser.formatEther(round.winnerBidAmount)
-        : null,
-      pricePaid: round.pricePaid
-        ? eventParser.formatEther(round.pricePaid)
-        : null,
-      pricePaidUSD: round.pricePaid
-        ? eventParser.formatUSD(round.pricePaid, ETH_PRICE)
-        : null,
-      auctionTransactionHash: round.auctionTransactionHash,
-      transactionCount: status?.transactionCount || 0,
+      ...formatRoundData(round, status?.transactionCount || 0),
       transactions: [],
       indexStatus: status?.status || 'not_started',
     })
@@ -341,24 +326,10 @@ app.get('/api/rounds', async (req, res) => {
         const cached = await roundIndexer.getCachedRound(roundKey)
 
         return {
-          round: round.round.toString(),
-          startTimestamp: Number(round.startTimestamp),
-          endTimestamp: Number(round.endTimestamp),
-          expressLaneController: round.expressLaneController,
-          auctionType: round.auctionType,
-          winnerBidder: round.winnerBidder,
-          winnerBidAmount: round.winnerBidAmount
-            ? eventParser.formatEther(round.winnerBidAmount)
-            : null,
-          pricePaid: round.pricePaid
-            ? eventParser.formatEther(round.pricePaid)
-            : null,
-          pricePaidUSD: round.pricePaid
-            ? eventParser.formatUSD(round.pricePaid, ETH_PRICE)
-            : null,
-          auctionTransactionHash: round.auctionTransactionHash,
-          transactionCount:
-            cached?.transactions.length || status?.transactionCount || 0,
+          ...formatRoundData(
+            round,
+            cached?.transactions.length || status?.transactionCount || 0
+          ),
           indexStatus: status?.status || (cached ? 'completed' : 'not_started'),
         }
       })
@@ -488,9 +459,9 @@ app.get('/api/indexer/metrics', (req, res) => {
 })
 
 // Start server
-app.listen(PORT, async () => {
-  console.log(`Timeboost server running on port ${PORT}`)
-  console.log(`Dashboard available at: http://localhost:${PORT}`)
+const server = app.listen(PORT, async () => {
+  logger.info('Server', `Timeboost server running on port ${PORT}`)
+  logger.info('Server', `Dashboard available at: http://localhost:${PORT}`)
   logger.info('Server', `RPC URL: ${RPC_URL}`)
   logger.info('Server', `ETH Price: $${ETH_PRICE}`)
   logger.info('Server', `Log level: ${LOG_LEVEL}`)
@@ -501,7 +472,28 @@ app.listen(PORT, async () => {
   // Start automatic indexing
   await indexingOrchestrator.start()
   logger.info('Server', 'Automatic indexing started')
+})
 
-  // Update cache periodically
-  setInterval(updateCache, 60000) // Every minute
+// Graceful shutdown handling
+process.on('SIGTERM', () => {
+  logger.info('Server', 'SIGTERM received, shutting down gracefully...')
+
+  // Stop accepting new connections
+  server.close(() => {
+    logger.info('Server', 'HTTP server closed')
+  })
+
+  // Stop the indexing orchestrator
+  indexingOrchestrator.stop()
+
+  // Give some time for cleanup then force exit
+  setTimeout(() => {
+    logger.info('Server', 'Forcing exit after timeout')
+    process.exit(0)
+  }, 5000)
+})
+
+process.on('SIGINT', () => {
+  logger.info('Server', 'SIGINT received, shutting down...')
+  process.exit(0)
 })

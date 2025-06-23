@@ -4,6 +4,16 @@ import { BatchProvider } from './BatchProvider'
 import { logger } from './Logger'
 import { AdaptiveRateLimiter } from './AdaptiveRateLimiter'
 
+// Configuration constants
+const _INDEXER_CONFIG = {
+  MAX_RESPONSE_TIMES: 100,
+  MIN_BATCH_SIZE: 1,
+  MAX_BATCH_SIZE: 10,
+  BATCH_DELAY_MS: 100,
+  RATE_LIMIT_DELAY_MS: 1000,
+  BASE_REQUESTS_PER_SECOND: 10,
+}
+
 export interface IndexerProgress {
   currentBlock: number
   totalBlocks: number
@@ -17,7 +27,6 @@ export class TransactionIndexer {
   private provider: BatchProvider
   private progressCallback?: (progress: IndexerProgress) => void
   private adaptiveRateLimiter: AdaptiveRateLimiter
-  private lastBatchSize: number = 5
 
   constructor(rpcUrl: string) {
     // Initialize adaptive rate limiter with conservative settings

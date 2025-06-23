@@ -9,6 +9,9 @@ This dashboard provides comprehensive monitoring of Arbitrum Timeboost auctions,
 ## Features
 
 - **Real-time Monitoring**: Fetches live data from Arbitrum One blockchain
+- **Persistent Storage**: SQLite database for efficient data storage and retrieval
+- **Adaptive Rate Limiting**: Automatically adjusts to network conditions
+- **Background Indexing**: Continuous indexing of new and historical rounds
 - **Auction Metrics**: Total rounds, revenue, and average prices
 - **Bidder Statistics**: Top bidders with win counts and spending data
 - **Recent Rounds**: Detailed view of recent auctions with transaction links
@@ -16,7 +19,7 @@ This dashboard provides comprehensive monitoring of Arbitrum Timeboost auctions,
 - **Indexing Progress**: Real-time progress tracking when scanning for transactions
 - **Automatic Updates**: Data refreshes every minute
 - **Efficient Caching**: Reduces RPC calls with smart caching
-- **Rate Limiting**: Handles API rate limits gracefully
+- **Process Management**: Built-in server management with PID tracking
 
 ## Quick Start
 
@@ -34,6 +37,22 @@ yarn timeboost
 # Open http://localhost:3001 in your browser
 ```
 
+### Server Management
+
+```bash
+# Check server status
+yarn timeboost --status
+
+# Stop the server
+yarn timeboost --stop
+
+# Restart the server
+yarn timeboost --restart
+
+# Show help
+yarn timeboost --help
+```
+
 ## Configuration
 
 Environment variables (optional):
@@ -47,6 +66,9 @@ export ETH_USD_PRICE=2600
 
 # Server port (default: 3001)
 export PORT=3001
+
+# Log level (default: INFO)
+export LOG_LEVEL=INFO
 ```
 
 ## Architecture
@@ -65,13 +87,26 @@ export PORT=3001
    - Scans blocks to find timeboosted transactions
    - Provides progress tracking during indexing
    - Uses batch processing for efficiency
+   - Adaptive rate limiting based on network conditions
 
-4. **Server** (`src/timeboost/server.ts`)
+4. **Database Layer** (`src/timeboost/db/`)
+   - SQLite database for persistent storage
+   - Repository pattern for clean data access
+   - Migration system for schema updates
+   - Efficient queries with proper indexing
+
+5. **Indexing Orchestrator** (`src/timeboost/core/DatabaseIndexingOrchestrator.ts`)
+   - Manages background indexing of rounds
+   - Automatic real-time indexing of new rounds
+   - Progressive backfill of historical data
+   - Adaptive concurrency control
+
+6. **Server** (`src/timeboost/server.ts`)
    - Express.js API server
    - Serves both API endpoints and static frontend
    - Implements caching and rate limiting
 
-5. **Frontend** (`src/ui/`)
+7. **Frontend** (`src/ui/`)
    - Vanilla JavaScript dashboard
    - Real-time data display with auto-refresh
    - Modal views for detailed round information
@@ -86,6 +121,8 @@ export PORT=3001
 - `GET /api/rounds/:round` - Detailed round information with timeboosted transactions
 - `GET /api/rounds/recent` - Recent auction rounds
 - `GET /api/indexer/progress` - Current transaction indexing progress
+- `GET /api/indexer/orchestrator` - Orchestrator status and metrics
+- `GET /api/indexer/metrics` - Detailed indexer performance metrics
 - `GET /health` - Server health check
 
 ## Data Displayed
@@ -136,11 +173,20 @@ yarn timeboost:test
 # Run dashboard integration tests
 npx mocha -r ts-node/register test/timeboost/dashboard.test.ts --timeout 60000
 
+# Run database tests
+npx mocha -r ts-node/register test/timeboost/database.test.ts
+
 # Format code
 yarn format
 
 # Lint code
 yarn lint
+
+# Database CLI tools
+ts-node src/timeboost/db/cli.ts stats        # Show database statistics
+ts-node src/timeboost/db/cli.ts rounds       # List recent rounds
+ts-node src/timeboost/db/cli.ts bidders      # Show top bidders
+ts-node src/timeboost/db/cli.ts transactions # List recent transactions
 ```
 
 ## Technical Details
@@ -156,6 +202,21 @@ yarn lint
 - Scans blocks within round time boundaries
 - Provides real-time progress updates during indexing
 - Uses batch RPC calls for efficient data fetching
+- Adaptive rate limiting automatically adjusts to network conditions
+- Persistent storage in SQLite database
+
+### Database Storage
+- All indexed data is stored in SQLite database (`timeboost.db`)
+- Automatic schema creation and migrations
+- Efficient queries with proper indexing
+- Data persists across server restarts
+
+### Adaptive Rate Limiting
+- Starts with conservative 5 concurrent requests
+- Increases by 20% when successful for 30 seconds
+- Decreases by 50% when hitting rate limits
+- Maintains equilibrium between 1-50 concurrent requests
+- Exponential backoff on rate limit errors
 
 ### Known Bidders
 The dashboard recognizes certain bidder addresses:
@@ -169,7 +230,8 @@ Additional bidders can be added in `src/timeboost/core/EventParser.ts`.
 ### Common Issues
 
 1. **Rate Limiting (429 errors)**
-   - The server implements automatic retry with exponential backoff
+   - The server implements adaptive rate limiting that automatically adjusts
+   - Monitor rate limiter metrics at `/api/indexer/metrics`
    - Consider using a private RPC endpoint for heavy usage
 
 2. **Connection Issues**
@@ -181,9 +243,20 @@ Additional bidders can be added in `src/timeboost/core/EventParser.ts`.
    - Historical data loads on startup (last ~10k blocks)
 
 4. **No Timeboosted Transactions**
-   - Transactions are indexed on-demand when viewing round details
-   - Progress bar shows indexing status
+   - Transactions are indexed automatically in the background
+   - Progress bar shows indexing status when viewing rounds
    - Some rounds may have no timeboosted transactions
+   - Check `/api/indexer/orchestrator` for indexing status
+
+5. **Server Already Running**
+   - Check status: `yarn timeboost --status`
+   - Stop existing: `yarn timeboost --stop`
+   - Restart: `yarn timeboost --restart`
+
+6. **Database Issues**
+   - Database file: `timeboost.db` (auto-created)
+   - Check stats: `ts-node src/timeboost/db/cli.ts stats`
+   - Database is automatically migrated on startup
 
 ## License
 

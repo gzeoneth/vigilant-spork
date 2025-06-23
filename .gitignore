@@ -28,3 +28,7 @@ CLAUDE.md
 
 notes
 example.bash
+
+# Timeboost server
+.timeboost-server.pid
+timeboost.db

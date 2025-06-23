@@ -279,7 +279,6 @@ export class AdaptiveRateLimiter {
   }
 
   getMetrics(): RateLimiterMetrics {
-    const totalRequests = this.successCount + this.failureCount
     return {
       successCount: this.successCount,
       failureCount: this.failureCount,

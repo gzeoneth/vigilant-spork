@@ -6,7 +6,7 @@ import { spawn, ChildProcess } from 'child_process'
 
 describe('Timeboost Dashboard Puppeteer Tests', () => {
   let serverProcess: ChildProcess
-  const serverUrl = 'http://localhost:3001'
+  const serverUrl = 'http://localhost:3002'
   const g = globalThis as any
 
   before(async function () {
@@ -14,7 +14,7 @@ describe('Timeboost Dashboard Puppeteer Tests', () => {
 
     // Start the server
     serverProcess = spawn('yarn', ['timeboost'], {
-      env: { ...process.env, PORT: '3001' },
+      env: { ...process.env, PORT: '3002' },
       detached: false,
     })
 
