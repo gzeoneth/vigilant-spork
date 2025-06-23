@@ -261,14 +261,15 @@ export class DatabaseIndexingOrchestrator {
       .filter(s => s.status === 'indexing' || s.status === 'pending').length
 
     // Determine if system is idle
-    const isIdle = Date.now() - this.lastActivityTime > ORCHESTRATOR_CONFIG.IDLE_THRESHOLD_MS
-    const batchSize = isIdle 
-      ? ORCHESTRATOR_CONFIG.IDLE_BATCH_SIZE 
+    const isIdle =
+      Date.now() - this.lastActivityTime > ORCHESTRATOR_CONFIG.IDLE_THRESHOLD_MS
+    const batchSize = isIdle
+      ? ORCHESTRATOR_CONFIG.IDLE_BATCH_SIZE
       : ORCHESTRATOR_CONFIG.BATCH_SIZE_PER_ITERATION
 
     // More aggressive indexing when idle
-    const maxConcurrent = isIdle 
-      ? ORCHESTRATOR_CONFIG.MAX_CONCURRENT_INDEXING * 2 
+    const maxConcurrent = isIdle
+      ? ORCHESTRATOR_CONFIG.MAX_CONCURRENT_INDEXING * 2
       : ORCHESTRATOR_CONFIG.MAX_CONCURRENT_INDEXING
 
     if (activeIndexing >= maxConcurrent) {
@@ -329,11 +330,11 @@ export class DatabaseIndexingOrchestrator {
         const current = roundNumbers[i]
         const next = roundNumbers[i + 1]
         const diff = Number(next - current)
-        
+
         if (diff > 1) {
           gaps.push({
             start: current + 1n,
-            end: next - 1n
+            end: next - 1n,
           })
         }
       }
@@ -347,7 +348,8 @@ export class DatabaseIndexingOrchestrator {
       }
 
       // Also check for partially indexed rounds (rounds that started but didn't complete)
-      const partiallyIndexed = await this.repository.indexingStatus.findPending(50)
+      const partiallyIndexed =
+        await this.repository.indexingStatus.findPending(50)
       partiallyIndexed.forEach(status => {
         this.indexingQueue.add(BigInt(status.round_number))
       })
@@ -362,23 +364,23 @@ export class DatabaseIndexingOrchestrator {
 
   private async getGapRounds(limit: number): Promise<bigint[]> {
     const gapRounds: bigint[] = []
-    
+
     for (const gap of this.identifiedGaps) {
       const gapSize = Number(gap.end - gap.start) + 1
       const roundsToTake = Math.min(gapSize, limit - gapRounds.length)
-      
+
       for (let i = 0; i < roundsToTake; i++) {
         const roundNumber = gap.start + BigInt(i)
         const round = this.eventParser.getRoundInfo(roundNumber)
-        
+
         if (round && !(await this.isRoundInDatabase(roundNumber))) {
           gapRounds.push(roundNumber)
         }
       }
-      
+
       if (gapRounds.length >= limit) break
     }
-    
+
     return gapRounds
   }
 
@@ -436,7 +438,7 @@ export class DatabaseIndexingOrchestrator {
                     .then(async () => {
                       // Update last activity time
                       this.lastActivityTime = Date.now()
-                      
+
                       // The round indexer will handle persisting transaction data
                       // Here we just update the indexing status
                       const stats = this.roundIndexer.getRoundStatus(

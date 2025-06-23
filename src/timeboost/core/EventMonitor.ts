@@ -218,17 +218,19 @@ export class EventMonitor {
       endBlock,
       'SetExpressLaneController'
     )
-    
+
     // Filter events that belong to this round
-    const roundEvents = [...auctionEvents, ...controllerEvents].filter(event => {
-      if (event.name === 'AuctionResolved') {
-        return event.args.round === roundNumber
-      } else if (event.name === 'SetExpressLaneController') {
-        return event.args.round === roundNumber
+    const roundEvents = [...auctionEvents, ...controllerEvents].filter(
+      event => {
+        if (event.name === 'AuctionResolved') {
+          return event.args.round.toString() === roundNumber.toString()
+        } else if (event.name === 'SetExpressLaneController') {
+          return event.args.round.toString() === roundNumber.toString()
+        }
+        return false
       }
-      return false
-    })
-    
+    )
+
     return roundEvents
   }
 }

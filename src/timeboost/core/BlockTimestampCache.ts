@@ -19,7 +19,7 @@ export class BlockTimestampCache {
       const oldestBlock = Math.min(...Array.from(this.cache.keys()))
       const oldestTimestamp = this.cache.get(oldestBlock)
       this.cache.delete(oldestBlock)
-      
+
       if (oldestTimestamp !== undefined) {
         const blocks = this.timestampIndex.get(oldestTimestamp) || []
         const filtered = blocks.filter(b => b !== oldestBlock)
@@ -32,7 +32,7 @@ export class BlockTimestampCache {
     }
 
     this.cache.set(blockNumber, timestamp)
-    
+
     // Update timestamp index
     const blocks = this.timestampIndex.get(timestamp) || []
     if (!blocks.includes(blockNumber)) {
@@ -51,7 +51,10 @@ export class BlockTimestampCache {
   }
 
   // Get closest cached blocks for a timestamp
-  getClosestBlocks(timestamp: number): { before?: CacheEntry; after?: CacheEntry } {
+  getClosestBlocks(timestamp: number): {
+    before?: CacheEntry
+    after?: CacheEntry
+  } {
     let closestBefore: CacheEntry | undefined
     let closestAfter: CacheEntry | undefined
 

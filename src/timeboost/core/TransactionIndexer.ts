@@ -274,14 +274,14 @@ export class TransactionIndexer {
       // Check if we have exact match in cache
       const exactBlocks = this.blockCache.getBlocksByTimestamp(targetTimestamp)
       if (exactBlocks.length > 0) {
-        return position === 'before' 
-          ? exactBlocks[exactBlocks.length - 1] 
+        return position === 'before'
+          ? exactBlocks[exactBlocks.length - 1]
           : exactBlocks[0]
       }
 
       // Get closest cached blocks to narrow search range
       const closest = this.blockCache.getClosestBlocks(targetTimestamp)
-      
+
       const latestBlock = await this.provider.getBlock('latest')
       if (!latestBlock) return null
 
@@ -318,7 +318,7 @@ export class TransactionIndexer {
       // Binary search for the block
       while (low <= high) {
         const mid = Math.floor((low + high) / 2)
-        
+
         // Check cache first
         let midTimestamp = this.blockCache.get(mid)
         if (midTimestamp === undefined) {
