@@ -1,4 +1,3 @@
-import { ethers } from 'ethers'
 import { TransactionIndexer } from './TransactionIndexer'
 import { RoundInfo, TimeboostedTransaction } from './types'
 import fs from 'fs/promises'
@@ -140,9 +139,9 @@ export class RoundIndexer {
 
           if (status.status === 'completed') {
             clearInterval(checkInterval)
-            const cached = await this.getCachedRound(roundKey)
-            if (cached) {
-              resolve(cached)
+            const cachedRound = await this.getCachedRound(roundKey)
+            if (cachedRound) {
+              resolve(cachedRound)
             } else {
               reject(new Error('Round indexed but cache not found'))
             }

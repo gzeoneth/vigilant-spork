@@ -1,9 +1,10 @@
+/* eslint-env browser */
 const API_URL = window.location.origin + '/api'
 
 let isLoading = false
 let isConnected = false
 let currentPage = 1
-let roundsPerPage = 20
+const roundsPerPage = 20
 let isInitialLoad = true
 
 async function fetchData(endpoint) {
@@ -64,7 +65,11 @@ async function loadMetrics() {
       '<div class="loading"><span class="spinner"></span>Loading metrics...</div>'
   }
 
-  const metrics = await fetchData('/metrics')
+  const [metrics, orchestratorStatus] = await Promise.all([
+    fetchData('/metrics'),
+    fetchData('/indexer/orchestrator'),
+  ])
+
   if (!metrics) {
     if (isInitialLoad) {
       metricsContainer.innerHTML =
@@ -95,6 +100,31 @@ async function loadMetrics() {
             <div class="metric-value">${metrics.lastProcessedBlock.toLocaleString()}</div>
             ${metrics.startBlock ? `<div class="metric-usd">From block ${metrics.startBlock.toLocaleString()}</div>` : ''}
         </div>
+        ${
+          orchestratorStatus
+            ? `
+        <div class="metric-card">
+            <div class="metric-label">Indexer Status</div>
+            <div class="metric-value" style="color: ${orchestratorStatus.isRunning ? '#10b981' : '#ef4444'}">
+                ${orchestratorStatus.isRunning ? 'Active' : 'Stopped'}
+            </div>
+            <div class="metric-usd">
+                ${orchestratorStatus.activeIndexing} indexing, 
+                ${orchestratorStatus.indexingQueueSize} queued
+            </div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Indexed Range</div>
+            <div class="metric-value">
+                ${orchestratorStatus.lastIndexedRound ? `Round ${orchestratorStatus.lastIndexedRound}` : 'N/A'}
+            </div>
+            <div class="metric-usd">
+                ${orchestratorStatus.backfillQueueSize} rounds to backfill
+            </div>
+        </div>
+        `
+            : ''
+        }
     `
   }
 }
@@ -343,10 +373,16 @@ function showRoundDetails(roundNumber) {
     }
 
     // If round is being indexed or needs indexing, show progress
-    if (round.indexStatus === 'not_started' || round.indexStatus === 'pending' || round.indexStatus === 'indexing') {
+    if (
+      round.indexStatus === 'not_started' ||
+      round.indexStatus === 'pending' ||
+      round.indexStatus === 'indexing'
+    ) {
       // If not started, trigger indexing
       if (round.indexStatus === 'not_started') {
-        await fetch(`${API_URL}/rounds/${roundNumber}/index`, { method: 'POST' })
+        await fetch(`${API_URL}/rounds/${roundNumber}/index`, {
+          method: 'POST',
+        })
       }
 
       // Show initial indexing status
@@ -356,7 +392,10 @@ function showRoundDetails(roundNumber) {
       activeProgressInterval = setInterval(async () => {
         const updatedRound = await fetchData(`/rounds/${roundNumber}`)
         if (updatedRound) {
-          if (updatedRound.indexStatus === 'completed' && updatedRound.transactions) {
+          if (
+            updatedRound.indexStatus === 'completed' &&
+            updatedRound.transactions
+          ) {
             clearInterval(activeProgressInterval)
             activeProgressInterval = null
             // Show the complete round details
@@ -364,7 +403,8 @@ function showRoundDetails(roundNumber) {
           } else if (updatedRound.indexStatus === 'error') {
             clearInterval(activeProgressInterval)
             activeProgressInterval = null
-            modalContent.innerHTML = '<div class="error">Error indexing round</div>'
+            modalContent.innerHTML =
+              '<div class="error">Error indexing round</div>'
           } else {
             // Update progress display without blinking
             const progressElement = document.getElementById('indexingProgress')
@@ -425,9 +465,9 @@ function displayRoundDetails(round) {
   const modalContent = document.getElementById('modalContent')
   if (!modalContent) return
 
-    let transactionsHtml = ''
-    if (round.transactions && round.transactions.length > 0) {
-      transactionsHtml = `
+  let transactionsHtml = ''
+  if (round.transactions && round.transactions.length > 0) {
+    transactionsHtml = `
         <h3 style="margin-top: 30px; margin-bottom: 20px;">Timeboosted Transactions (${round.transactions.length})</h3>
         <table>
           <thead>
@@ -468,15 +508,15 @@ function displayRoundDetails(round) {
           </tbody>
         </table>
       `
-    } else {
-      transactionsHtml = `
+  } else {
+    transactionsHtml = `
         <div style="margin-top: 30px; padding: 20px; background: #27272a; border-radius: 8px; text-align: center;">
           <p style="color: #71717a;">No timeboosted transactions found for this round</p>
         </div>
       `
-    }
+  }
 
-    modalContent.innerHTML = `
+  modalContent.innerHTML = `
       <div class="round-details">
         <div class="detail-row">
           <span class="detail-label">Round Number</span>
@@ -546,7 +586,6 @@ function displayRoundDetails(round) {
       <div id="progressContainer"></div>
       ${transactionsHtml}
     `
-  })
 }
 
 function updateProgressDisplay(progress) {

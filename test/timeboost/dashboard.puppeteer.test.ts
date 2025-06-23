@@ -1,4 +1,3 @@
-import { describe, it, before, after } from 'mocha'
 import { expect } from 'chai'
 import { spawn, ChildProcess } from 'child_process'
 
@@ -8,6 +7,7 @@ import { spawn, ChildProcess } from 'child_process'
 describe('Timeboost Dashboard Puppeteer Tests', () => {
   let serverProcess: ChildProcess
   const serverUrl = 'http://localhost:3001'
+  const g = globalThis as any
 
   before(async function () {
     this.timeout(30000)
@@ -52,7 +52,7 @@ describe('Timeboost Dashboard Puppeteer Tests', () => {
     this.timeout(30000)
 
     // Navigate to the dashboard
-    await global.mcp__puppeteer__puppeteer_navigate({
+    await g.mcp__puppeteer__puppeteer_navigate({
       url: serverUrl,
       launchOptions: {
         headless: true,
@@ -64,14 +64,14 @@ describe('Timeboost Dashboard Puppeteer Tests', () => {
     await new Promise(resolve => setTimeout(resolve, 3000))
 
     // Take a screenshot for debugging
-    await global.mcp__puppeteer__puppeteer_screenshot({
+    await g.mcp__puppeteer__puppeteer_screenshot({
       name: 'dashboard-loaded',
       width: 1280,
       height: 800,
     })
 
     // Check if key elements are present
-    const pageContent = await global.mcp__puppeteer__puppeteer_evaluate({
+    const pageContent = await g.mcp__puppeteer__puppeteer_evaluate({
       script: `
         const metrics = document.querySelector('.metrics-grid')
         const bidders = document.querySelector('#bidders')
@@ -104,7 +104,7 @@ describe('Timeboost Dashboard Puppeteer Tests', () => {
     await new Promise(resolve => setTimeout(resolve, 2000))
 
     // Check if there are clickable rounds
-    const hasRounds = await global.mcp__puppeteer__puppeteer_evaluate({
+    const hasRounds = await g.mcp__puppeteer__puppeteer_evaluate({
       script: `
         const rows = document.querySelectorAll('.clickable-row')
         return rows.length > 0
@@ -113,7 +113,7 @@ describe('Timeboost Dashboard Puppeteer Tests', () => {
 
     if (hasRounds) {
       // Click the first round
-      await global.mcp__puppeteer__puppeteer_click({
+      await g.mcp__puppeteer__puppeteer_click({
         selector: '.clickable-row:first-child',
       })
 
@@ -121,14 +121,14 @@ describe('Timeboost Dashboard Puppeteer Tests', () => {
       await new Promise(resolve => setTimeout(resolve, 2000))
 
       // Take a screenshot of the modal
-      await global.mcp__puppeteer__puppeteer_screenshot({
+      await g.mcp__puppeteer__puppeteer_screenshot({
         name: 'round-details-modal',
         width: 1280,
         height: 800,
       })
 
       // Check if modal is displayed
-      const modalState = await global.mcp__puppeteer__puppeteer_evaluate({
+      const modalState = await g.mcp__puppeteer__puppeteer_evaluate({
         script: `
           const modal = document.getElementById('roundModal')
           const modalContent = document.getElementById('modalContent')
@@ -146,14 +146,14 @@ describe('Timeboost Dashboard Puppeteer Tests', () => {
       expect(modalState.hasContent).to.be.true
 
       // Close the modal
-      await global.mcp__puppeteer__puppeteer_click({
+      await g.mcp__puppeteer__puppeteer_click({
         selector: '.close',
       })
 
       await new Promise(resolve => setTimeout(resolve, 500))
 
       // Verify modal is closed
-      const modalClosed = await global.mcp__puppeteer__puppeteer_evaluate({
+      const modalClosed = await g.mcp__puppeteer__puppeteer_evaluate({
         script: `
           const modal = document.getElementById('roundModal')
           return modal.style.display !== 'block'

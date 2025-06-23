@@ -1,4 +1,3 @@
-import { describe, it, before, after } from 'mocha'
 import { expect } from 'chai'
 import { spawn, ChildProcess } from 'child_process'
 
@@ -161,5 +160,29 @@ describe('Timeboost Dashboard Tests', () => {
       expect(data.progress).to.have.property('totalBlocks')
       expect(data.progress).to.have.property('processedBlocks')
     }
+  })
+
+  it('should return orchestrator status', async function () {
+    this.timeout(60000)
+    
+    // Wait for cache update and orchestrator to start
+    await new Promise(resolve => setTimeout(resolve, 20000))
+    
+    const response = await fetchWrapper(`${apiUrl}/indexer/orchestrator`)
+    expect(response.status).to.equal(200)
+
+    const data = (await response.json()) as any
+    expect(data).to.have.property('isRunning')
+    expect(data).to.have.property('lastIndexedRound')
+    expect(data).to.have.property('oldestIndexedRound')
+    expect(data).to.have.property('indexingQueueSize')
+    expect(data).to.have.property('backfillQueueSize')
+    expect(data).to.have.property('activeIndexing')
+    
+    // Should be running
+    expect(data.isRunning).to.equal(true)
+    
+    // Should have some rounds in queue
+    expect(data.indexingQueueSize + data.backfillQueueSize).to.be.greaterThan(0)
   })
 })

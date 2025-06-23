@@ -18,7 +18,7 @@ export class TransactionIndexer {
 
   constructor(rpcUrl: string) {
     this.provider = new BatchProvider(rpcUrl, {
-      batchSize: 20,  // Reduced from 100 to 20 requests per batch
+      batchSize: 20, // Reduced from 100 to 20 requests per batch
       batchDelay: 100, // Increased delay between batches
       requestsPerSecond: 5, // Reduced RPS from 10 to 5
     })
@@ -58,7 +58,7 @@ export class TransactionIndexer {
         'TransactionIndexer',
         `Processed blocks ${blockNum}-${endBlock}, found ${timeboostedTxs.length} timeboosted transactions so far`
       )
-      
+
       // Add delay between block batches to avoid overwhelming the RPC
       if (endBlock < toBlock) {
         await new Promise(resolve => setTimeout(resolve, 200))

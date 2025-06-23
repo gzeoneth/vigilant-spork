@@ -4,8 +4,9 @@ import path from 'path'
 import { ethers } from 'ethers'
 import { EventMonitor } from './core/EventMonitor'
 import { EventParser } from './core/EventParser'
-import { TransactionIndexer, IndexerProgress } from './core/TransactionIndexer'
-import { RoundIndexer, RoundIndexStatus } from './core/RoundIndexer'
+// import { TransactionIndexer, IndexerProgress } from './core/TransactionIndexer'
+import { RoundIndexer } from './core/RoundIndexer'
+import { IndexingOrchestrator } from './core/IndexingOrchestrator'
 import { logger } from './core/Logger'
 
 const app = express()
@@ -24,8 +25,9 @@ app.use(express.static(path.join(__dirname, '../ui')))
 // Initialize components
 const eventMonitor = new EventMonitor(RPC_URL)
 const eventParser = new EventParser()
-const transactionIndexer = new TransactionIndexer(RPC_URL)
+// const transactionIndexer = new TransactionIndexer(RPC_URL)
 const roundIndexer = new RoundIndexer(RPC_URL)
+const indexingOrchestrator = new IndexingOrchestrator(roundIndexer, eventParser)
 
 // Cache for data
 let cachedData = {
@@ -37,8 +39,8 @@ let cachedData = {
 }
 
 // Indexer progress tracking
-let indexerProgress: IndexerProgress | null = null
-let currentRoundIndexStatus: RoundIndexStatus | null = null
+// const indexerProgress: IndexerProgress | null = null
+// const currentRoundIndexStatus: RoundIndexStatus | null = null
 
 const CACHE_DURATION = 30000 // 30 seconds
 
@@ -144,8 +146,7 @@ async function updateCache() {
   }
 }
 
-// Initial cache update
-updateCache()
+// Initial cache update will be done when server starts
 
 // Background fetcher - single threaded execution
 let isFetching = false
@@ -437,7 +438,8 @@ app.post('/api/rounds/:round/index', async (req, res) => {
     // Start indexing
     roundIndexer
       .indexRound(round, status => {
-        currentRoundIndexStatus = status
+        // Status is tracked internally by roundIndexer
+        logger.debug('Server', `Round ${round.round} status: ${status.status}`)
       })
       .catch(error => {
         logger.error('Server', `Error indexing round ${round.round}`, error)
@@ -462,11 +464,26 @@ app.get('/health', (req, res) => {
   })
 })
 
+app.get('/api/indexer/orchestrator', (req, res) => {
+  const status = indexingOrchestrator.getStatus()
+  res.json(status)
+})
+
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Timeboost server running on port ${PORT}`)
   console.log(`Dashboard available at: http://localhost:${PORT}`)
   logger.info('Server', `RPC URL: ${RPC_URL}`)
   logger.info('Server', `ETH Price: $${ETH_PRICE}`)
   logger.info('Server', `Log level: ${LOG_LEVEL}`)
+
+  // Update cache first
+  await updateCache()
+
+  // Start automatic indexing
+  await indexingOrchestrator.start()
+  logger.info('Server', 'Automatic indexing started')
+
+  // Update cache periodically
+  setInterval(updateCache, 60000) // Every minute
 })
