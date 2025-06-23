@@ -1,0 +1,514 @@
+import express from 'express'
+import cors from 'cors'
+import path from 'path'
+import { ethers } from 'ethers'
+import { EventMonitor } from './core/EventMonitor'
+import { EventParser } from './core/EventParser'
+import { RoundIndexer } from './core/RoundIndexer'
+import { IndexingOrchestrator } from './core/IndexingOrchestrator'
+import { logger } from './core/Logger'
+
+const app = express()
+const PORT = process.env.PORT || 3001
+const RPC_URL = process.env.RPC_URL || 'https://arb1.arbitrum.io/rpc'
+const ETH_PRICE = parseFloat(process.env.ETH_USD_PRICE || '2600')
+const LOG_LEVEL = process.env.LOG_LEVEL || 'INFO'
+
+// Middleware
+app.use(cors())
+app.use(express.json())
+
+// Serve static files from the UI directory
+app.use(express.static(path.join(__dirname, '../ui')))
+
+// Initialize components
+const eventMonitor = new EventMonitor(RPC_URL)
+const eventParser = new EventParser()
+const roundIndexer = new RoundIndexer(RPC_URL)
+const indexingOrchestrator = new IndexingOrchestrator(roundIndexer, eventParser)
+
+// Helper function to format value with ETH and USD
+function formatValueWithUSD(value: bigint | null): {
+  eth: string | null
+  usd: string | null
+} {
+  if (!value) return { eth: null, usd: null }
+  return {
+    eth: eventParser.formatEther(value),
+    usd: eventParser.formatUSD(value, ETH_PRICE),
+  }
+}
+
+// Helper function to format round data consistently
+function formatRoundData(round: any, transactionCount: number = 0): any {
+  const pricePaidFormatted = formatValueWithUSD(round.pricePaid)
+  const winnerBidAmountFormatted = formatValueWithUSD(round.winnerBidAmount)
+
+  return {
+    round: round.round.toString(),
+    startTimestamp: Number(round.startTimestamp),
+    endTimestamp: Number(round.endTimestamp),
+    expressLaneController: round.expressLaneController,
+    auctionType: round.auctionType,
+    winnerBidder: round.winnerBidder,
+    winnerBidAmount: winnerBidAmountFormatted.eth,
+    winnerBidAmountUSD: winnerBidAmountFormatted.usd,
+    pricePaid: pricePaidFormatted.eth,
+    pricePaidUSD: pricePaidFormatted.usd,
+    auctionTransactionHash: round.auctionTransactionHash,
+    transactionCount,
+    startBlock: round.startBlock,
+    endBlock: round.endBlock,
+  }
+}
+
+// Helper function to format bidder data consistently
+function formatBidderData(bidder: any): any {
+  const totalSpentFormatted = formatValueWithUSD(bidder.totalSpent)
+  const currentBalanceFormatted = formatValueWithUSD(bidder.currentBalance)
+
+  return {
+    address: bidder.address,
+    label: bidder.label,
+    roundsWon: bidder.roundsWon,
+    totalSpent: totalSpentFormatted.eth,
+    totalSpentUSD: totalSpentFormatted.usd,
+    currentBalance: currentBalanceFormatted.eth,
+    currentBalanceUSD: currentBalanceFormatted.usd,
+  }
+}
+
+// Cache for data
+let cachedData = {
+  metrics: null as any,
+  bidders: null as any,
+  recentRounds: null as any,
+  lastUpdate: 0,
+  startBlock: 0,
+}
+
+const CACHE_DURATION = 30000 // 30 seconds
+
+// Function to update cache
+async function updateCache() {
+  try {
+    logger.info('Server', 'Updating cache...')
+
+    // Get recent blocks to scan
+    const provider = new ethers.JsonRpcProvider(RPC_URL)
+    const latestBlock = await provider.getBlockNumber()
+    const fromBlock = Math.max(1, latestBlock - 10000) // Last ~10k blocks
+
+    logger.info('Server', `Scanning blocks ${fromBlock} to ${latestBlock}...`)
+
+    // Store the starting block
+    cachedData.startBlock = fromBlock
+
+    // Get events in batches with rate limiting
+    const batchSize = 500 // Smaller batches to avoid rate limits
+    let allEvents: any[] = []
+
+    for (let start = fromBlock; start <= latestBlock; start += batchSize) {
+      const end = Math.min(start + batchSize - 1, latestBlock)
+      try {
+        const events = await eventMonitor.getEvents(start, end)
+        allEvents = allEvents.concat(events)
+        logger.debug(
+          'Server',
+          `Fetched ${events.length} events from blocks ${start}-${end}`
+        )
+
+        // Add delay between batches to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 200))
+      } catch (error) {
+        logger.error(
+          'Server',
+          `Error fetching events for blocks ${start}-${end}`,
+          error
+        )
+        // Add longer delay on error (might be rate limited)
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+    }
+
+    // Process all events
+    allEvents.forEach(event => eventParser.processEvent(event))
+
+    const metrics = eventParser.getKeyMetrics()
+    const bidders = eventParser.getBidderStats()
+
+    // Update cache
+    const totalRevenueFormatted = formatValueWithUSD(metrics.totalRevenue)
+    const avgPriceFormatted = formatValueWithUSD(metrics.averagePricePerRound)
+
+    cachedData = {
+      metrics: {
+        totalRounds: metrics.totalRounds,
+        totalRevenue: totalRevenueFormatted.eth,
+        totalRevenueUSD: totalRevenueFormatted.usd,
+        averagePricePerRound: avgPriceFormatted.eth,
+        averagePricePerRoundUSD: avgPriceFormatted.usd,
+        lastProcessedBlock: latestBlock,
+        startBlock: fromBlock,
+      },
+      bidders: bidders.map(formatBidderData),
+      recentRounds: metrics.recentRounds.map(round =>
+        formatRoundData(round, round.transactions.length)
+      ),
+      lastUpdate: Date.now(),
+      startBlock: fromBlock,
+    }
+
+    logger.info('Server', 'Cache updated successfully')
+  } catch (error) {
+    logger.error('Server', 'Error updating cache', error)
+  }
+}
+
+// Initial cache update will be done when server starts
+
+// Background fetcher - single threaded execution
+let isFetching = false
+
+async function backgroundFetcher() {
+  if (isFetching) {
+    logger.debug('Server', 'Fetcher already running, skipping...')
+    return
+  }
+
+  isFetching = true
+
+  try {
+    await updateCache()
+  } catch (error) {
+    logger.error('Server', 'Error in background fetcher', error)
+  } finally {
+    isFetching = false
+  }
+}
+
+// Update cache periodically with single-threaded execution
+setInterval(backgroundFetcher, 60000) // Every minute
+
+// API Routes
+
+app.get('/api/metrics', async (req, res) => {
+  try {
+    // Return cached data if available and fresh
+    if (
+      cachedData.metrics &&
+      Date.now() - cachedData.lastUpdate < CACHE_DURATION
+    ) {
+      return res.json(cachedData.metrics)
+    }
+
+    // If we're currently fetching, indicate that
+    if (isFetching && cachedData.lastUpdate === 0) {
+      return res.json({
+        totalRounds: 0,
+        totalRevenue: '0',
+        totalRevenueUSD: '0',
+        averagePricePerRound: '0',
+        averagePricePerRoundUSD: '0',
+        lastProcessedBlock: 0,
+        isLoading: true,
+      })
+    }
+
+    // Otherwise return default data
+    return res.json({
+      totalRounds: 0,
+      totalRevenue: '0',
+      totalRevenueUSD: '0',
+      averagePricePerRound: '0',
+      averagePricePerRoundUSD: '0',
+      lastProcessedBlock: 0,
+    })
+  } catch (error) {
+    logger.error('Server', 'Error in /api/metrics', error)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+app.get('/api/bidders', async (req, res) => {
+  try {
+    if (
+      cachedData.bidders &&
+      Date.now() - cachedData.lastUpdate < CACHE_DURATION
+    ) {
+      return res.json(cachedData.bidders)
+    }
+
+    return res.json([])
+  } catch (error) {
+    logger.error('Server', 'Error in /api/bidders', error)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+app.get('/api/rounds/recent', async (req, res) => {
+  try {
+    if (
+      cachedData.recentRounds &&
+      Date.now() - cachedData.lastUpdate < CACHE_DURATION
+    ) {
+      return res.json(cachedData.recentRounds)
+    }
+
+    return res.json([])
+  } catch (error) {
+    logger.error('Server', 'Error in /api/rounds/recent', error)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+app.get('/api/rounds/:round', async (req, res) => {
+  try {
+    const roundNumber = BigInt(req.params.round)
+    const round = eventParser.getRoundInfo(roundNumber)
+
+    if (!round) {
+      return res.status(404).json({ error: 'Round not found' })
+    }
+
+    // Check if round is being indexed or cached
+    const roundKey = round.round.toString()
+    const cachedRound = await roundIndexer.getCachedRound(roundKey)
+
+    if (cachedRound) {
+      // Return cached data with block information
+      const roundWithBlocks = {
+        ...round,
+        startBlock: cachedRound.startBlock,
+        endBlock: cachedRound.endBlock,
+      }
+      return res.json({
+        ...formatRoundData(roundWithBlocks, cachedRound.transactions.length),
+        transactions: cachedRound.transactions.map(tx => ({
+          hash: tx.hash,
+          blockNumber: tx.blockNumber,
+          timestamp: tx.timestamp,
+          from: tx.from,
+          to: tx.to,
+          value: eventParser.formatEther(tx.value),
+          gasUsed: tx.gasUsed.toString(),
+          effectiveGasPrice: eventParser.formatEther(tx.effectiveGasPrice),
+          arbiscanUrl: `https://arbiscan.io/tx/${tx.hash}`,
+        })),
+        indexStatus: 'completed',
+      })
+    }
+
+    // Check indexing status
+    const status = roundIndexer.getRoundStatus(roundKey)
+
+    // Return round info with current indexing status
+    return res.json({
+      ...formatRoundData(round, status?.transactionCount || 0),
+      transactions: [],
+      indexStatus: status?.status || 'not_started',
+    })
+  } catch (error) {
+    logger.error('Server', 'Error in /api/rounds/:round', error)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+app.get('/api/rounds', async (req, res) => {
+  try {
+    const page = parseInt(req.query.page as string) || 1
+    const limit = parseInt(req.query.limit as string) || 20
+    const offset = (page - 1) * limit
+
+    const allRounds = eventParser.getAllRounds()
+    // Sort rounds by round number descending (newest first)
+    const sortedRounds = allRounds.sort((a, b) => Number(b.round - a.round))
+    const rounds = sortedRounds.slice(offset, offset + limit)
+
+    // Get indexing status for each round
+    const formattedRounds = await Promise.all(
+      rounds.map(async round => {
+        const roundKey = round.round.toString()
+        const status = roundIndexer.getRoundStatus(roundKey)
+        const cached = await roundIndexer.getCachedRound(roundKey)
+
+        const roundWithBlocks = cached
+          ? {
+              ...round,
+              startBlock: cached.startBlock,
+              endBlock: cached.endBlock,
+            }
+          : round
+
+        return {
+          ...formatRoundData(
+            roundWithBlocks,
+            cached?.transactions.length || status?.transactionCount || 0
+          ),
+          indexStatus: status?.status || (cached ? 'completed' : 'not_started'),
+        }
+      })
+    )
+
+    const totalPages = Math.ceil(allRounds.length / limit)
+
+    return res.json({
+      rounds: formattedRounds,
+      pagination: {
+        page,
+        limit,
+        total: allRounds.length,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
+    })
+  } catch (error) {
+    logger.error('Server', 'Error in /api/rounds', error)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+app.get('/api/indexer/progress', (req, res) => {
+  const roundId = req.query.round as string
+
+  if (roundId) {
+    const status = roundIndexer.getRoundStatus(roundId)
+    if (status) {
+      return res.json({
+        round: roundId,
+        status: status.status,
+        transactionCount: status.transactionCount,
+        error: status.error,
+      })
+    }
+    // Round not found
+    return res.json({
+      status: 'idle',
+      round: roundId,
+    })
+  }
+
+  // Return overall indexer status when no specific round is requested
+  const allStatuses = roundIndexer.getAllRoundStatuses()
+  const indexingCount = allStatuses.filter(s => s.status === 'indexing').length
+  const pendingCount = allStatuses.filter(s => s.status === 'pending').length
+
+  if (indexingCount > 0) {
+    return res.json({
+      status: 'indexing',
+      progress: {
+        currentBlock: 0,
+        totalBlocks: indexingCount + pendingCount,
+        processedBlocks: 0,
+        roundsIndexing: indexingCount,
+        roundsPending: pendingCount,
+      },
+    })
+  }
+
+  return res.json({
+    status: 'idle',
+  })
+})
+
+app.post('/api/rounds/:round/index', async (req, res) => {
+  try {
+    const roundNumber = BigInt(req.params.round)
+    const round = eventParser.getRoundInfo(roundNumber)
+
+    if (!round) {
+      return res.status(404).json({ error: 'Round not found' })
+    }
+
+    // Start indexing
+    roundIndexer
+      .indexRound(round, status => {
+        // Status is tracked internally by roundIndexer
+        logger.debug('Server', `Round ${round.round} status: ${status.status}`)
+      })
+      .catch(error => {
+        logger.error('Server', `Error indexing round ${round.round}`, error)
+      })
+
+    return res.json({
+      message: 'Indexing started',
+      round: round.round.toString(),
+    })
+  } catch (error) {
+    logger.error('Server', 'Error in /api/rounds/:round/index', error)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    lastProcessedBlock: cachedData.metrics?.lastProcessedBlock || 0,
+    ethPrice: ETH_PRICE,
+    lastUpdate: cachedData.lastUpdate,
+  })
+})
+
+app.get('/api/indexer/orchestrator', (req, res) => {
+  const status = indexingOrchestrator.getStatus()
+  res.json(status)
+})
+
+app.get('/api/indexer/metrics', (req, res) => {
+  const orchestratorStatus = indexingOrchestrator.getStatus()
+  const indexerMetrics = roundIndexer.getIndexerMetrics()
+
+  res.json({
+    orchestrator: orchestratorStatus,
+    rateLimiter: {
+      currentConcurrency: indexerMetrics.currentConcurrency,
+      targetConcurrency: indexerMetrics.targetConcurrency,
+      successCount: indexerMetrics.successCount,
+      failureCount: indexerMetrics.failureCount,
+      rateLimitCount: indexerMetrics.rateLimitCount,
+      averageResponseTime: indexerMetrics.averageResponseTime,
+      lastAdjustmentTime: indexerMetrics.lastAdjustmentTime,
+    },
+  })
+})
+
+// Start server
+const server = app.listen(PORT, async () => {
+  logger.info('Server', `Timeboost server running on port ${PORT}`)
+  logger.info('Server', `Dashboard available at: http://localhost:${PORT}`)
+  logger.info('Server', `RPC URL: ${RPC_URL}`)
+  logger.info('Server', `ETH Price: $${ETH_PRICE}`)
+  logger.info('Server', `Log level: ${LOG_LEVEL}`)
+
+  // Update cache first
+  await updateCache()
+
+  // Start automatic indexing
+  await indexingOrchestrator.start()
+  logger.info('Server', 'Automatic indexing started')
+})
+
+// Graceful shutdown handling
+process.on('SIGTERM', () => {
+  logger.info('Server', 'SIGTERM received, shutting down gracefully...')
+
+  // Stop accepting new connections
+  server.close(() => {
+    logger.info('Server', 'HTTP server closed')
+  })
+
+  // Stop the indexing orchestrator
+  indexingOrchestrator.stop()
+
+  // Give some time for cleanup then force exit
+  setTimeout(() => {
+    logger.info('Server', 'Forcing exit after timeout')
+    process.exit(0)
+  }, 5000)
+})
+
+process.on('SIGINT', () => {
+  logger.info('Server', 'SIGINT received, shutting down...')
+  process.exit(0)
+})
